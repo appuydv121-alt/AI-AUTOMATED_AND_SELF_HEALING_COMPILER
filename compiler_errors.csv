@@ -1,0 +1,10 @@
+Timestamp,Error_Type,Line_Number,Raw_Message,Source_Code_Snippet
+2026-09-26 14:59:27,"C:\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp: In function 'int main()':
+C:\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:5:15: error: expected primary-expression before ';' token
+    5 |     int age = ; // This will cause a Type Mismatch
+      |               ^
+",Unknown,"C:\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp: In function 'int main()':
+C:\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:5:15: error: expected primary-expression before ';' token
+    5 |     int age = ; // This will cause a Type Mismatch
+      |               ^
+",N/A

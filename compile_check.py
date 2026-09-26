@@ -1,0 +1,29 @@
+from compiler_service import compile_and_run
+code = r'''#include <iostream>
+using namespace std;
+
+int main() {
+    int n;
+    cout << "Enter a number: ";
+    cin >> n;
+
+    if (n > 0) {
+        cout << "Positive number" << endl;
+    }
+    else if (n < 0) {
+        cout << "Negative number" << endl;
+    }
+    else {
+        cout << "Zero" << endl;
+    }
+
+    for (int i = 1; i <= 5; i++) {
+        cout << i << " ";
+    }
+
+    cout << "\nProgram completed!" << endl;
+
+    return 0;
+}
+'''
+print(compile_and_run(code))
