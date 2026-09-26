@@ -8,3 +8,33 @@ C:\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:5:15: error: e
     5 |     int age = ; // This will cause a Type Mismatch
       |               ^
 ",N/A
+2026-09-26 15:45:05,"C:\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp: In function 'int main()':
+C:\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:6:9: error: redeclaration of 'int age'
+    6 |     int age = -1;
+      |         ^~~
+C:\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:4:9: note: 'int age' previously declared here
+    4 |     int age = 10; // This will cause a Type Mismatch
+      |         ^~~
+",Unknown,"C:\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp: In function 'int main()':
+C:\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:6:9: error: redeclaration of 'int age'
+    6 |     int age = -1;
+      |         ^~~
+C:\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:4:9: note: 'int age' previously declared here
+    4 |     int age = 10; // This will cause a Type Mismatch
+      |         ^~~
+",N/A
+2026-09-26 15:58:32,"C:\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp: In function 'int main()':
+C:\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:7:9: error: redeclaration of 'int age'
+    7 |     int age = 10;
+      |         ^~~
+C:\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:5:9: note: 'int age' previously declared here
+    5 |     int age = 10; // This will cause a Type Mismatch
+      |         ^~~
+",Unknown,"C:\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp: In function 'int main()':
+C:\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:7:9: error: redeclaration of 'int age'
+    7 |     int age = 10;
+      |         ^~~
+C:\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:5:9: note: 'int age' previously declared here
+    5 |     int age = 10; // This will cause a Type Mismatch
+      |         ^~~
+",N/A
