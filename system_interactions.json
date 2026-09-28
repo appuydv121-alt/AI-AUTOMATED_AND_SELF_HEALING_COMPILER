@@ -54,5 +54,29 @@
         "user_prompt": "SYSTEM (Success)",
         "llm_response": "**Code compiled successfully!** The output is shown on the left.\n\n**AI Logic Check:**\nThe code provided has a logical flaw in the variable `age`. The variable is declared as an integer, but the value assigned to it is a string literal (\"2026\"). This will cause a Type Mismatch error at compile-time.\n\nThe correct code should be:\n\n```cpp\n#include <iostream>\nusing namespace std;\n\nint main() {\n    int age = 2026; // Declared age as an integer\n    cout << age << endl;\n    // calculate the number of years the person lived\n    // give me the sum of n numbers code \n    // give the recursive code for fibonacci series\n    return 0;\n}\n```\n\nIn this corrected code, the value \"2026\" is assigned to the integer variable `age`. This will not cause a Type Mismatch error and the code should compile without any issues.",
         "fixed_code": "N/A"
+    },
+    {
+        "timestamp": "2026-09-28 22:10:42",
+        "error_category": "Logic Check",
+        "code_snippet": "#include <iostream>\nusing namespace std;\n\nint main() {\n    int age = 10; // This will cause a Type Mismatch\n    cout << age << endl;\n    int age1=20;\n    string age3=\"12\";\n    return 0;\n}",
+        "user_prompt": "SYSTEM (Success)",
+        "llm_response": "**Code compiled successfully!** The output is shown on the left.\n\n**AI Logic Check:**\nThere are several logical flaws in this code:\n\n1. `int age = 10;`: This line declares an integer variable `age` and assigns it the value 10, but the comment states that this will cause a Type Mismatch. This is not correct. The code is correct, and `age` is an integer variable.\n\n2. `cout << age << endl;`: This line correctly prints the value of `age` to the console.\n\n3. `int age1=20;`: This line declares an integer variable `age1` and assigns it the value 20. This is correct.\n\n4. `string age3=\"12\";`: This line declares a `string` variable `age3` and assigns it the string value \"12\". However, this will cause a compilation error because `age3` is declared as a `string`, but it's trying to assign a `const char*` value (\"12\") to it. The correct declaration would be `const string age3 = \"12\";`.\n\n5. `return 0;`: This line correctly returns an integer value of 0 to indicate successful program execution.\n\nIn summary, the only logical flaw in this code is the incorrect declaration of `age3`.",
+        "fixed_code": "N/A"
+    },
+    {
+        "timestamp": "2026-09-28 22:13:18",
+        "error_category": "Follow-up Chat",
+        "code_snippet": "#include <iostream>\nusing namespace std;\n\nint main() {\n    int age = 10; // This will cause a Type Mismatch\n    cout << age << endl;\n    int age1=20;\n    string age3=\"12\";\n    return 0;\n}",
+        "user_prompt": "give me the secure code for this ",
+        "llm_response": "Here's the corrected code:\n\n```cpp\n#include <iostream>\n#include <string>\nusing namespace std;\n\nint main() {\n    int age = 10; // This is correct\n    cout << age << endl;\n    int age1=20;\n    const string age3 = \"12\"; // This is corrected\n    return 0;\n}\n```\n\nI've included the `<string>` header for the `string` data type and corrected the declaration of `age3` to use the `const` keyword as needed for a constant string literal.",
+        "fixed_code": "N/A"
+    },
+    {
+        "timestamp": "2026-09-28 22:14:20",
+        "error_category": "Follow-up Chat",
+        "code_snippet": "#include <iostream>\nusing namespace std;\n\nint main() {\n    int age = 10; // This will cause a Type Mismatch\n    cout << age << endl;\n    int age1=20;\n    string age3=\"12\";\n    return 0;\n}",
+        "user_prompt": "why u used the const in front of the age3 ?? ",
+        "llm_response": "I used `const` in front of `age3` because a string literal, such as `\"12\"`, is a constant value. The `const` keyword ensures that the value of `age3` is not changed accidentally. It's a good practice to use `const` when declaring constant variables, including string literals.",
+        "fixed_code": "N/A"
     }
 ]
