@@ -38,3 +38,12 @@ C:\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:5:9: note: 'in
     5 |     int age = 10; // This will cause a Type Mismatch
       |         ^~~
 ",N/A
+2026-09-28 23:41:38,"C:\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:1:10: fatal error: io: No such file or directory
+    1 | #include <io>
+      |          ^~~~
+compilation terminated.
+",Unknown,"C:\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:1:10: fatal error: io: No such file or directory
+    1 | #include <io>
+      |          ^~~~
+compilation terminated.
+",N/A
