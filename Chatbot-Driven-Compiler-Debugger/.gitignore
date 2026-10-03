@@ -1,0 +1,20 @@
+# Ignore Zip files and redundant folders
+*.zip
+24CSB0A58_CD_Final_Codes/
+
+# Mac & Compiler Artifacts
+*.dSYM/
+*.bin
+temp_program
+temp_source.cpp
+debug_target.cpp
+
+# Logs and Data
+powermetrics_log.txt
+system_interactions.jsongithub_scraper.py
+
+# Secrets — never commit real keys
+.env
+
+# LLM disk cache (auto-regenerated)
+.llm_cache/

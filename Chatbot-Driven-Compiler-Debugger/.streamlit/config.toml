@@ -1,0 +1,75 @@
+[theme]
+baseFontSize = 16
+baseFontWeight = 400
+font = "sans-serif"
+headingFont = "sans-serif"
+headingFontSizes = ["1.75rem", "1.375rem", "1.25rem", "1.125rem", "1rem", "0.875rem"]
+headingFontWeights = [650, 600, 600, 600, 600, 600]
+codeFont = "monospace"
+codeFontSize = "0.85rem"
+codeFontWeight = 400
+baseRadius = "small"
+buttonRadius = "small"
+showWidgetBorder = true
+showSidebarBorder = true
+
+[theme.light]
+primaryColor = "#2456D6"
+backgroundColor = "#F6F7F9"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#14171F"
+linkColor = "#174A9C"
+linkUnderline = true
+codeTextColor = "#202634"
+codeBackgroundColor = "#F1F3F7"
+borderColor = "#D8DDE5"
+redColor = "#B91C1C"
+redBackgroundColor = "#FCECEC"
+redTextColor = "#991B1B"
+orangeColor = "#9A4A0A"
+orangeBackgroundColor = "#FFF3E5"
+orangeTextColor = "#8A3C00"
+yellowColor = "#805B00"
+yellowBackgroundColor = "#FFF8D9"
+yellowTextColor = "#6B4F00"
+greenColor = "#15803D"
+greenBackgroundColor = "#EAF5EE"
+greenTextColor = "#166534"
+blueColor = "#0369A1"
+blueBackgroundColor = "#EAF4FA"
+blueTextColor = "#075985"
+violetColor = "#6D28D9"
+violetBackgroundColor = "#F2ECFC"
+violetTextColor = "#5B21B6"
+
+[theme.dark]
+primaryColor = "#8FB0FF"
+backgroundColor = "#0F1218"
+secondaryBackgroundColor = "#171B23"
+textColor = "#E8EBF1"
+linkColor = "#A6C3FF"
+linkUnderline = true
+codeTextColor = "#E5EAF2"
+codeBackgroundColor = "#12161D"
+borderColor = "#2B3240"
+redColor = "#F87171"
+redBackgroundColor = "#321E23"
+redTextColor = "#FDA4A4"
+orangeColor = "#F7B267"
+orangeBackgroundColor = "#32271D"
+orangeTextColor = "#F9C78E"
+yellowColor = "#FBBF24"
+yellowBackgroundColor = "#332D1A"
+yellowTextColor = "#FCD978"
+greenColor = "#4ADE80"
+greenBackgroundColor = "#192C22"
+greenTextColor = "#86EFAC"
+blueColor = "#38BDF8"
+blueBackgroundColor = "#172A35"
+blueTextColor = "#7DD3FC"
+violetColor = "#A78BFA"
+violetBackgroundColor = "#29233A"
+violetTextColor = "#C4B5FD"
+
+[browser]
+gatherUsageStats = false

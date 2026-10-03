@@ -1,0 +1,8 @@
+streamlit
+requests
+codecarbon
+streamlit-ace
+tree-sitter>=0.22,<0.27
+tree-sitter-cpp>=0.23,<0.24
+google-genai>=2.0
+python-dotenv
