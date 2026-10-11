@@ -1,0 +1,27 @@
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Executables & compiler temporary artifacts
+*.exe
+*.bin
+*.o
+*.obj
+*.dSYM/
+check.exe
+temp_program*
+temp_source.cpp
+
+# Secrets
+.env

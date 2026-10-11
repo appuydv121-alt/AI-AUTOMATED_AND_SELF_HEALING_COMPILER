@@ -4,7 +4,8 @@ import os
 from datetime import datetime
 
 # File to store our dataset
-LOG_FILE = "compiler_errors.csv"
+_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_FILE = os.path.join(_DIR, "compiler_errors.csv")
 
 def initialize_log_file():
     """Creates the CSV file with headers if it doesn't exist."""

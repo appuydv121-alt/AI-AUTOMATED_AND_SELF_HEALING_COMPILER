@@ -5,6 +5,8 @@ import requests
 import os
 import time
 import shutil
+import json
+import html
 
 from codecarbon import EmissionsTracker
 # Import our custom modules
@@ -255,45 +257,44 @@ def stop_and_save_metrics(tracker, start_t):
         print(f"CodeCarbon Warning Caught: {e}")
 
 
-@st.fragment(run_every=1.0)
-def render_live_diagnostics():
-    user_code = st.session_state.get("editor_code", "")
+def sync_live_diagnostics(user_code: str):
+    """Synchronously compute and merge static and compiler diagnostics for current editor code."""
+    if "live_diagnostics" not in st.session_state:
+        st.session_state.live_diagnostics = []
     semantic_enabled = st.session_state.get("semantic_analysis_enabled", True)
     now = time.time()
-    semantic_config = (semantic_enabled, 0.30)
-    code_changed = user_code != st.session_state.diag_last_code
-    config_changed = semantic_config != st.session_state.get("diag_semantic_config")
-
+    code_changed = user_code != st.session_state.get("diag_last_code")
     if code_changed:
         st.session_state.diag_last_code = user_code
         st.session_state.diag_last_time = now
         st.session_state.diag_syntax_checked_code = None
         st.session_state.cached_compiler_diags = []
-    if code_changed or config_changed:
-        st.session_state.diag_semantic_config = semantic_config
-        local_diagnostics = get_cached_local_diagnostics(
-            user_code, semantic_enabled=semantic_enabled, semantic_min_confidence=0.30
-        )
-        st.session_state.diagnostics_source_label = "live"
-        if st.session_state.diag_syntax_checked_code == user_code:
-            st.session_state.live_diagnostics = diag.merge_diagnostics(
-                local_diagnostics, st.session_state.cached_compiler_diags
-            )
-        else:
-            st.session_state.live_diagnostics = local_diagnostics
 
-    if diag.should_run_debounced_check(st.session_state, user_code, now=now):
+    local_diagnostics = get_cached_local_diagnostics(
+        user_code, semantic_enabled=semantic_enabled, semantic_min_confidence=0.30
+    )
+
+    if user_code and user_code.strip() and st.session_state.get("diag_syntax_checked_code") != user_code:
         app_dir = os.path.dirname(os.path.abspath(__file__))
         compiler_diags, _ = diag.run_compiler_syntax_check(user_code, app_dir)
         st.session_state.cached_compiler_diags = compiler_diags
         st.session_state.diag_syntax_checked_code = user_code
+        st.session_state.live_diagnostics = diag.merge_diagnostics(local_diagnostics, compiler_diags)
+    elif st.session_state.get("diag_syntax_checked_code") == user_code:
         st.session_state.live_diagnostics = diag.merge_diagnostics(
-            get_cached_local_diagnostics(
-                user_code, semantic_enabled=semantic_enabled, semantic_min_confidence=0.30
-            ), compiler_diags
+            local_diagnostics, st.session_state.get("cached_compiler_diags", [])
         )
+    else:
+        st.session_state.live_diagnostics = local_diagnostics
 
-    if st.session_state.diagnostics_source_label == "post-compile":
+    return st.session_state.live_diagnostics
+
+
+@st.fragment(run_every=1.0)
+def render_live_diagnostics():
+    user_code = st.session_state.get("editor_code", "")
+    sync_live_diagnostics(user_code)
+    if st.session_state.get("diagnostics_source_label") == "post-compile":
         st.caption("Snapshot as of the last Compile & Analyze run.")
     else:
         st.caption("Live pre-compile analysis; compiler check runs after a brief pause.")
@@ -301,6 +302,241 @@ def render_live_diagnostics():
         diag.render_diagnostics_html(st.session_state.live_diagnostics),
         unsafe_allow_html=True,
     )
+
+
+def render_live_ai_optimizer_panel(
+    user_code,
+    live_ai_enabled,
+    live_ai_provider,
+    gemini_live_model,
+    ollama_live_model,
+    live_ai_max_suggestions,
+    gemini_optimal_model,
+    ollama_optimal_model,
+):
+    """Render the Live AI Code Suggestions and Optimizer panel."""
+    if not live_ai_enabled:
+        st.caption("Live AI Suggestions are currently disabled in the sidebar.")
+        return
+
+    _disp_prov = st.session_state.get("last_served_provider") or st.session_state.get(
+        "live_suggestions_active_provider", live_ai_provider
+    )
+    _disp_mdl = st.session_state.get("last_served_model") or st.session_state.get(
+        "live_suggestions_active_model",
+        gemini_live_model if live_ai_provider == "gemini" else ollama_live_model,
+    )
+    st.caption(f"Active provider: {_disp_prov} • model: {_disp_mdl}")
+    _target_model_display = gemini_live_model if live_ai_provider == "gemini" else ollama_live_model
+    suggestion_key = (
+        user_code,
+        live_ai_provider,
+        _target_model_display,
+        live_ai_max_suggestions,
+        str(st.session_state.get("live_diagnostics", [])),
+    )
+    has_code = bool(user_code and user_code.strip())
+    is_code_changed = suggestion_key != st.session_state.get("live_suggestions_key")
+    should_fetch_suggestions = False
+
+    if not has_code:
+        st.caption("Write C++ code in the editor to see live suggestions.")
+    elif is_code_changed:
+        is_first_load = st.session_state.get("live_suggestions_key") is None
+        pop_title = "AI Suggestions Available" if is_first_load else "Code Modified · New Suggestions Ready"
+        pop_desc = (
+            f"Click below to request AI suggestions from {_target_model_display}."
+            if is_first_load
+            else f"Code changes detected in editor. Click below to analyze your updated code with {_target_model_display}."
+        )
+        btn_label = "💡 Get AI Suggestions" if is_first_load else "💡 Update AI Suggestions"
+
+        st.markdown(
+            f"""
+            <div class="ui-suggestion-pop">
+                <div class="ui-suggestion-pop-header">
+                    <div class="ui-suggestion-pop-title">
+                        <span>💡</span>
+                        <span>{pop_title}</span>
+                    </div>
+                    {ui_theme.badge("Ready", tone="suggestion")}
+                </div>
+                <div class="ui-suggestion-pop-desc">
+                    {pop_desc}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button(btn_label, key="request_live_suggestions_btn", type="primary"):
+            should_fetch_suggestions = True
+    else:
+        c_status, c_refresh = st.columns([3, 1])
+        with c_status:
+            st.caption(f"✓ Suggestions up to date with editor ({_target_model_display})")
+        with c_refresh:
+            if st.button("🔄 Refresh", key="refresh_live_suggestions_btn", help="Re-run AI suggestions on current code"):
+                should_fetch_suggestions = True
+
+    if should_fetch_suggestions and has_code:
+        started_at = time.monotonic()
+        progress_message = {"text": "Sending the current code to the model..."}
+        model_metrics = {}
+        algorithm_analysis = {}
+
+        def show_model_progress(event):
+            stage = event.get("stage")
+            elapsed = time.monotonic() - started_at
+            if stage == "done":
+                model_metrics["tokens"] = event.get("tokens")
+            elif stage == "analysis":
+                algorithm_analysis.update(event.get("analysis", {}))
+                current = algorithm_analysis.get("current_complexity", "")
+                alternative = algorithm_analysis.get("alternative_complexity", "")
+                progress_message["text"] = "Conceptual optimization analysis received from the model."
+                if current:
+                    progress_message["text"] += f" Current: {current}"
+                if alternative:
+                    progress_message["text"] += f" Alternative: {alternative}"
+                model_status.update(label=progress_message["text"], state="running")
+            elif stage == "requesting":
+                progress_message["text"] = f"Waiting for {_target_model_display} to respond... ({elapsed:.1f}s)"
+                model_status.update(label=progress_message["text"], state="running")
+            elif stage == "generating":
+                progress_message["text"] = (
+                    f"{_target_model_display} is generating · {event.get('characters', 0)} characters received · {elapsed:.1f}s"
+                )
+                model_status.update(label=progress_message["text"], state="running")
+            elif stage == "validating":
+                progress_message["text"] = "Model response received; checking suggestions against your code..."
+                model_status.update(label=progress_message["text"], state="running")
+            elif stage == "complete":
+                tokens = event.get("tokens", model_metrics.get("tokens"))
+                token_note = f" · {tokens} model tokens" if tokens is not None else ""
+                progress_message["text"] = f"Received {event.get('suggestions', 0)} safe suggestion(s){token_note}."
+                model_status.update(label=progress_message["text"], state="complete")
+            elif stage == "no_suggestions":
+                progress_message["text"] = "Model responded, but found no safe, applicable suggestions."
+                model_status.update(label=progress_message["text"], state="complete")
+            elif stage == "error":
+                progress_message["text"] = f"Model request failed: {event.get('message', 'unknown error')}"
+                model_status.update(label=progress_message["text"], state="error")
+
+        with st.status(progress_message["text"], expanded=False) as model_status:
+            _suggestions_result = render_live_suggestions(
+                code=user_code,
+                diagnostics=st.session_state.get("live_diagnostics", []),
+                provider_name=live_ai_provider,
+                gemini_model=gemini_live_model,
+                ollama_model=ollama_live_model,
+                max_items=live_ai_max_suggestions,
+                progress_callback=show_model_progress,
+            )
+            if isinstance(_suggestions_result, tuple) and len(_suggestions_result) == 3:
+                _sugg_list, _active_prov, _active_mdl = _suggestions_result
+            else:
+                _sugg_list, _active_prov, _active_mdl = _suggestions_result, "", ""
+            st.session_state.live_suggestions_cache = _sugg_list
+            if _active_prov and _active_mdl:
+                st.session_state.last_served_provider = _active_prov
+                st.session_state.last_served_model = _active_mdl
+                st.session_state.live_suggestions_active_provider = _active_prov
+                st.session_state.live_suggestions_active_model = _active_mdl
+        st.session_state.live_suggestions_message = progress_message["text"]
+        st.session_state.live_suggestions_code = user_code
+        st.session_state.live_suggestions_key = suggestion_key
+        st.session_state.live_suggestions_analysis = algorithm_analysis or None
+        st.rerun(scope="app")
+
+    suggestions = st.session_state.get("live_suggestions_cache", [])
+    analysis = st.session_state.get("live_suggestions_analysis")
+    if is_code_changed and suggestions:
+        st.caption("ℹ️ Showing suggestions from previous code version (click button above to update):")
+    if analysis:
+        with st.expander("Algorithm analysis", expanded=True):
+            st.markdown(f"**What it computes:** {analysis.get('specification', 'Not identified')}")
+            st.markdown(f"**Current complexity:** {analysis.get('current_complexity', 'Not provided')}")
+            st.markdown(f"**Alternative:** {analysis.get('alternative', 'No better approach identified')}")
+            st.markdown(f"**Alternative complexity:** {analysis.get('alternative_complexity', 'Not provided')}")
+            tradeoffs = analysis.get("tradeoffs", [])
+            if tradeoffs:
+                st.markdown("**Tradeoffs:** " + "; ".join(str(item) for item in tradeoffs))
+            if analysis.get("recommendation"):
+                st.caption(f"Recommendation: {analysis['recommendation']}")
+    if suggestions:
+        for idx, suggestion in enumerate(suggestions):
+            with st.expander(
+                f"{suggestion.get('severity', 'info').title()} · lines {suggestion.get('line_start')}–{suggestion.get('line_end')}",
+                expanded=(idx == 0),
+            ):
+                st.write(suggestion.get("issue", ""))
+                st.write("Reason:", suggestion.get("reason", ""))
+                st.code(suggestion.get("original", ""), language="cpp")
+                st.code(suggestion.get("optimized", ""), language="cpp")
+                if st.button("Accept", key=f"accept_live_suggestion_{idx}"):
+                    st.session_state.editor_code = (
+                        apply_suggestion_to_code(
+                            user_code,
+                            suggestion.get("line_start", 1),
+                            suggestion.get("line_end", 1),
+                            suggestion.get("optimized", ""),
+                            suggestion.get("original", ""),
+                        )
+                        or user_code
+                    )
+                    st.session_state.editor_version += 1
+                    st.session_state.live_suggestions_cache = []
+                    st.session_state.live_suggestions_key = None
+                    log_interaction("live_suggestion_accept", suggestion.get("issue", ""), user_code, "SUGGESTION")
+                    st.rerun(scope="app")
+                if st.button("Dismiss", key=f"dismiss_live_suggestion_{idx}"):
+                    log_interaction("live_suggestion_dismiss", suggestion.get("issue", ""), user_code, "SUGGESTION")
+                    st.session_state.live_suggestions_cache = [
+                        s for i, s in enumerate(suggestions) if i != idx
+                    ]
+                    st.rerun(scope="app")
+    else:
+        if not is_code_changed:
+            message = st.session_state.get("live_suggestions_message", "")
+            if message.startswith("Model request failed:"):
+                st.error(message)
+            elif message:
+                st.caption(message)
+            else:
+                st.caption("Suggestions will appear after the model analyzes the current code.")
+
+    if st.button("Generate Optimal Code", key="generate_optimal_code_btn"):
+        with st.spinner("Generating an optimized version with the active model..."):
+            optimized_code, change_list, verification_status = generate_optimal_program(
+                user_code,
+                st.session_state.get("live_diagnostics", []),
+                {
+                    "return_code": 0,
+                    "stdout": st.session_state.get("last_stdout", ""),
+                    "stderr": st.session_state.get("last_stderr", ""),
+                },
+                provider_name=live_ai_provider,
+                gemini_model=gemini_optimal_model,
+                ollama_model=ollama_optimal_model,
+            )
+            st.session_state.complete_optimal_code = {
+                "code": optimized_code,
+                "changes": change_list,
+                "status": verification_status,
+            }
+            st.rerun(scope="app")
+
+    if st.session_state.get("complete_optimal_code"):
+        with st.expander("✨ Complete Optimal Code", expanded=False):
+            block = st.session_state.complete_optimal_code
+            st.code(block["code"], language="cpp")
+            st.caption(block["status"])
+            st.write(block["changes"])
+            if st.button("Apply to editor", key="apply_complete_optimal_code"):
+                st.session_state.editor_code = block["code"]
+                st.session_state.editor_version += 1
+                log_interaction("apply_optimal_code", "Applied complete optimized program", user_code, "OPTIMIZATION")
+                st.rerun(scope="app")
 
 
 # --- UI CONFIGURATION ---
@@ -435,7 +671,7 @@ provider_choices = ["gemini", "ollama"]
 live_ai_provider = st.sidebar.selectbox("Provider", options=provider_choices, index=0, key="live_ai_provider")
 cloud_opt_in = st.sidebar.checkbox("Enable cloud providers", value=True, key="cloud_opt_in", disabled=True, help="Gemini is the primary provider; Ollama is automatic fallback.")
 
-_gemini_models = ["gemini-3.1-flash-lite", "gemini-3.5-flash"]
+_gemini_models = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash"]
 _ollama_models = ["qwen2.5-coder:3b", "qwen2.5-coder:7b", "llama3:latest"]
 
 if live_ai_provider == "gemini":
@@ -472,17 +708,51 @@ elif live_ai_provider == "gemini":
     )
     st.sidebar.caption(_msg)
 
-st.title("Chatbot-Driven C++ Compiler & Debugger")
-st.markdown("### Secure Coding Assistant running on Local LLM")
+st.markdown(
+    """
+    <div class="app-hero-header">
+        <div class="app-hero-top-row">
+            <span class="app-hero-badge">⚡ AI-POWERED • SELF-HEALING C++ COMPILER</span>
+            <div class="app-hero-chips">
+                <span class="app-hero-chip">🛡️ Memory Sandbox</span>
+                <span class="app-hero-chip">🌿 Green Compiler</span>
+                <span class="app-hero-chip">💬 LLM Tutor</span>
+            </div>
+        </div>
+        <h1 class="app-hero-title">Chatbot-Driven C++ Compiler & Debugger</h1>
+        <p class="app-hero-subtitle">Interactive LLM Tutoring • Real-time AST Reasoning • Sandboxed Execution • Deep Diagnostics</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-col1, col2 = st.columns(2)
+if "editor_width_pct" not in st.session_state:
+    st.session_state.editor_width_pct = 50
+
+if "layout_swapped" not in st.session_state:
+    st.session_state.layout_swapped = False
+
+col_a, col_b = st.columns(2)
+if st.session_state.layout_swapped:
+    col2 = col_a  # Chatbot rendered on Left
+    col1 = col_b  # Editor rendered on Right
+else:
+    col1 = col_a  # Editor rendered on Left
+    col2 = col_b  # Chatbot rendered on Right
 
 
 # LEFT COLUMN: THE CODE EDITOR & COMPILER
 
 with col1:
     st.markdown('<div class="ui-panel-anchor ui-editor-panel"></div>', unsafe_allow_html=True)
-    st.subheader("📝 C++ Code Editor")
+    c_hdr1, c_hdr2 = st.columns([3.5, 1.2])
+    with c_hdr1:
+        st.subheader("📝 C++ Code Editor")
+    with c_hdr2:
+        if st.button("⇄ Swap Panels", key="btn_w_swap", use_container_width=True, help="Swap left and right panels"):
+            st.session_state.layout_swapped = not st.session_state.layout_swapped
+            st.rerun()
+
     default_code = """#include <iostream>
 using namespace std;
 
@@ -515,6 +785,89 @@ int main() {
 
     if st.session_state.last_compiled_code is not None and user_code != st.session_state.last_compiled_code:
         reset_execution_state()
+
+    # --- INLINE LIVE DIAGNOSTICS & SUGGESTION ON THE EDITOR ITSELF ---
+    current_diags = sync_live_diagnostics(user_code)
+    ace_annotations = []
+    if current_diags:
+        for d in current_diags:
+            line_val = d.get("line")
+            if line_val is not None:
+                try:
+                    row_idx = max(0, int(line_val) - 1)
+                    ace_annotations.append({
+                        "row": row_idx,
+                        "column": 0,
+                        "text": d.get("message", d.get("title", "Error")),
+                        "type": "error" if d.get("category") in {"ERROR", "BUG", "SECURITY_CRITICAL"} else "warning",
+                    })
+                except Exception:
+                    pass
+
+        # Sync with Ace Editor gutter in real-time
+        st.html(f"<img src=x onerror=\"if(window.__setAceAnnotations)window.__setAceAnnotations({json.dumps(ace_annotations)});this.remove();\" style=\"display:none;\">")
+
+        # Primary error details
+        primary_diag = current_diags[0]
+        p_line = primary_diag.get("line")
+        p_line_txt = f"Line {p_line} • " if p_line else ""
+        p_cat = primary_diag.get("category", "ERROR")
+        p_label = diag.CATEGORY_LABELS.get(p_cat, p_cat)
+        p_icon = diag.CATEGORY_ICONS.get(p_cat, "❌")
+        p_msg = primary_diag.get("message", primary_diag.get("title", ""))
+
+        # Smart quick fix hints
+        p_fix_hint = ""
+        p_msg_l = p_msg.lower()
+        if "invalid conversion" in p_msg_l or "cannot convert" in p_msg_l:
+            p_fix_hint = "💡 <b>Quick Suggestion:</b> Type mismatch detected. Assign an integer literal (e.g. <code>int age = 20;</code>) or change type to <code>std::string age = \"twenty\";</code>."
+        elif "was not declared in this scope" in p_msg_l:
+            p_fix_hint = "💡 <b>Quick Suggestion:</b> Identifier was not declared. Check spelling or declare the variable before using it."
+        elif "expected ';'" in p_msg_l:
+            p_fix_hint = "💡 <b>Quick Suggestion:</b> Missing semicolon <code>;</code> at the end of the statement."
+        elif primary_diag.get("fix"):
+            p_fix_hint = f"💡 <b>Quick Suggestion:</b> {html.escape(primary_diag['fix'])}"
+
+        st.markdown(
+            f"""
+            <div class="editor-live-error-badge">
+                <div class="editor-error-header">
+                    <span class="editor-error-tag">{p_icon} {p_line_txt}{p_label}</span>
+                    <span class="editor-error-sub">Live AST & Compiler Detection</span>
+                </div>
+                <div class="editor-error-message">{html.escape(p_msg)}</div>
+                {f'<div class="editor-error-fix">{p_fix_hint}</div>' if p_fix_hint else ''}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.html("<img src=x onerror=\"if(window.__setAceAnnotations)window.__setAceAnnotations([]);this.remove();\" style=\"display:none;\">")
+        st.markdown(
+            """
+            <div class="editor-live-clean-badge">
+                <span>✅</span> <span>No syntax or type errors detected in editor. Ready to compile!</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    # ── EXPANDERS FROM SCREENSHOT 2: LIVE DIAGNOSTICS & AI SUGGESTIONS ──
+    diag_status = f" ({len(current_diags)} finding{'s' if len(current_diags) > 1 else ''} ⚠️)" if current_diags else " (Clean ✅)"
+    with st.expander(f"🩺 Live Diagnostics & Static AST Linter{diag_status}", expanded=False):
+        render_live_diagnostics()
+
+    with st.expander("💡 Live AI Code Suggestions & Optimizer", expanded=False):
+        render_live_ai_optimizer_panel(
+            user_code=user_code,
+            live_ai_enabled=live_ai_enabled,
+            live_ai_provider=live_ai_provider,
+            gemini_live_model=gemini_live_model,
+            ollama_live_model=ollama_live_model,
+            live_ai_max_suggestions=live_ai_max_suggestions,
+            gemini_optimal_model=gemini_optimal_model,
+            ollama_optimal_model=ollama_optimal_model,
+        )
     
     # Program Input (stdin)
     st.text_area(
@@ -527,13 +880,7 @@ int main() {
     if len(st.session_state.get("stdin_input", "")) > 100 * 1024:
         st.warning("⚠️ Program input exceeds 100KB and will be capped at 100KB during execution.")
 
-    col1_a, col1_b = st.columns([1, 3])
-    with col1_a:
-        compile_btn = st.button("Compile & Analyze", type="primary")
-    with col1_b:
-        if st.button("🗑️ Clear Chat History"):
-            st.session_state.messages = []
-            st.rerun()
+    compile_btn = st.button("🚀 Compile & Analyze", type="primary", use_container_width=True)
 
     if compile_btn:
         if not user_code.strip():
@@ -541,7 +888,8 @@ int main() {
         else:
             reset_execution_state()
             start_time = time.time()
-            tracker = EmissionsTracker(project_name="llama3_debugger", log_level="error")
+            app_dir = os.path.dirname(os.path.abspath(__file__))
+            tracker = EmissionsTracker(project_name="llama3_debugger", output_dir=app_dir, log_level="error")
             tracker.start()
             # 1. Security Scan
             is_safe, warning_msg = run_security_guardrail(user_code)
@@ -876,6 +1224,50 @@ int main() {
         m_col2.metric("⚡ Energy Used", f"{st.session_state.green_metrics['energy']:.6f} kWh")
         m_col3.metric("🌍 Carbon Emitted", f"{st.session_state.green_metrics['carbon']:.5f} g") 
 
+    if st.session_state.get("last_status") is not None:
+        with st.expander("📤 Execution Output & Status Details", expanded=False):
+            _status = st.session_state.last_status
+            _stdout = st.session_state.get("last_stdout", "")
+            _stderr = st.session_state.get("last_stderr", "")
+            _exit_code = st.session_state.get("last_exit_code")
+            _exec_time = st.session_state.get("last_execution_time", 0.0)
+            _timed_out = st.session_state.get("last_timed_out", False)
+
+            m_c1, m_c2, m_c3 = st.columns(3)
+            with m_c1:
+                if _timed_out:
+                    st.metric("Exit Code", "Timed Out")
+                elif _exit_code is not None:
+                    st.metric("Exit Code", str(_exit_code))
+                else:
+                    st.metric("Exit Code", "0" if _status == 0 else str(_status))
+            with m_c2:
+                st.metric("Execution Time", f"{_exec_time:.3f} s" if _exec_time is not None else "0.000 s")
+            with m_c3:
+                if _status == 0:
+                    st.markdown(f"<div style='margin-top: 10px;'>{ui_theme.badge('Success (0)', tone='success')}</div>", unsafe_allow_html=True)
+                elif _status == 2:
+                    st.markdown(f"<div style='margin-top: 10px;'>{ui_theme.badge('Runtime Error', tone='error')}</div>", unsafe_allow_html=True)
+                elif _timed_out or _status == -1:
+                    st.markdown(f"<div style='margin-top: 10px;'>{ui_theme.badge('Timed Out', tone='warning')}</div>", unsafe_allow_html=True)
+                else:
+                    st.markdown(f"<div style='margin-top: 10px;'>{ui_theme.badge('Compile Error', tone='error')}</div>", unsafe_allow_html=True)
+
+            st.markdown(ui_theme.code_label("Standard Output (stdout)"), unsafe_allow_html=True)
+            if _stdout and _stdout.strip():
+                st.code(_stdout, language="text")
+            else:
+                st.code("(no output)", language="text")
+
+            if _stderr and _stderr.strip():
+                st.markdown(ui_theme.code_label("Standard Error (stderr)"), unsafe_allow_html=True)
+                if _timed_out:
+                    st.error(_stderr)
+                elif _status == 0:
+                    st.code(_stderr, language="text")
+                else:
+                    st.error(_stderr)
+
     #End of Left Column....
 
 
@@ -883,251 +1275,82 @@ int main() {
 
 with col2:
     st.markdown('<div class="ui-panel-anchor ui-diagnostics-panel"></div>', unsafe_allow_html=True)
-    st.subheader("🩺 AI Code Diagnostics")
-    render_live_diagnostics()
-
-    if live_ai_enabled:
-        with st.container():
-            st.subheader("Live Suggestions")
-            _disp_prov = st.session_state.get("last_served_provider") or st.session_state.get("live_suggestions_active_provider", live_ai_provider)
-            _disp_mdl  = st.session_state.get("last_served_model") or st.session_state.get("live_suggestions_active_model", gemini_live_model if live_ai_provider == "gemini" else ollama_live_model)
-            st.caption(f"Active provider: {_disp_prov} • model: {_disp_mdl}")
-            _target_model_display = gemini_live_model if live_ai_provider == "gemini" else ollama_live_model
-            suggestion_key = (
-                user_code,
-                live_ai_provider,
-                _target_model_display,
-                live_ai_max_suggestions,
-                str(st.session_state.get("live_diagnostics", [])),
-            )
-            if suggestion_key != st.session_state.get("live_suggestions_key"):
-                started_at = time.monotonic()
-                progress_message = {"text": "Sending the current code to the model..."}
-                model_metrics = {}
-                algorithm_analysis = {}
-
-                def show_model_progress(event):
-                    stage = event.get("stage")
-                    elapsed = time.monotonic() - started_at
-                    if stage == "done":
-                        model_metrics["tokens"] = event.get("tokens")
-                    elif stage == "analysis":
-                        algorithm_analysis.update(event.get("analysis", {}))
-                        current = algorithm_analysis.get("current_complexity", "")
-                        alternative = algorithm_analysis.get("alternative_complexity", "")
-                        progress_message["text"] = "Conceptual optimization analysis received from the model."
-                        if current:
-                            progress_message["text"] += f" Current: {current}"
-                        if alternative:
-                            progress_message["text"] += f" Alternative: {alternative}"
-                        model_status.update(label=progress_message["text"], state="running")
-                    elif stage == "requesting":
-                        progress_message["text"] = f"Waiting for {_target_model_display} to respond... ({elapsed:.1f}s)"
-                        model_status.update(label=progress_message["text"], state="running")
-                    elif stage == "generating":
-                        progress_message["text"] = (
-                            f"{_target_model_display} is generating · {event.get('characters', 0)} characters received · {elapsed:.1f}s"
-                        )
-                        model_status.update(label=progress_message["text"], state="running")
-                    elif stage == "validating":
-                        progress_message["text"] = "Model response received; checking suggestions against your code..."
-                        model_status.update(label=progress_message["text"], state="running")
-                    elif stage == "complete":
-                        tokens = event.get("tokens", model_metrics.get("tokens"))
-                        token_note = f" · {tokens} model tokens" if tokens is not None else ""
-                        progress_message["text"] = (
-                            f"Received {event.get('suggestions', 0)} safe suggestion(s){token_note}."
-                        )
-                        model_status.update(label=progress_message["text"], state="complete")
-                    elif stage == "no_suggestions":
-                        progress_message["text"] = "Model responded, but found no safe, applicable suggestions."
-                        model_status.update(label=progress_message["text"], state="complete")
-                    elif stage == "error":
-                        progress_message["text"] = f"Model request failed: {event.get('message', 'unknown error')}"
-                        model_status.update(label=progress_message["text"], state="error")
-
-                with st.status(progress_message["text"], expanded=False) as model_status:
-                    _suggestions_result = render_live_suggestions(
-                        code=user_code,
-                        diagnostics=st.session_state.get("live_diagnostics", []),
-                        provider_name=live_ai_provider,
-                        gemini_model=gemini_live_model,
-                        ollama_model=ollama_live_model,
-                        max_items=live_ai_max_suggestions,
-                        progress_callback=show_model_progress,
-                    )
-                    # render_live_suggestions returns (suggestions, active_provider, active_model)
-                    if isinstance(_suggestions_result, tuple) and len(_suggestions_result) == 3:
-                        _sugg_list, _active_prov, _active_mdl = _suggestions_result
-                    else:
-                        _sugg_list, _active_prov, _active_mdl = _suggestions_result, "", ""
-                    st.session_state.live_suggestions_cache = _sugg_list
-                    if _active_prov and _active_mdl:
-                        st.session_state.last_served_provider = _active_prov
-                        st.session_state.last_served_model = _active_mdl
-                        st.session_state.live_suggestions_active_provider = _active_prov
-                        st.session_state.live_suggestions_active_model = _active_mdl
-                st.session_state.live_suggestions_message = progress_message["text"]
-                st.session_state.live_suggestions_code = user_code
-                st.session_state.live_suggestions_key = suggestion_key
-                st.session_state.live_suggestions_analysis = algorithm_analysis or None
-            suggestions = st.session_state.get("live_suggestions_cache", [])
-            analysis = st.session_state.get("live_suggestions_analysis")
-            if analysis:
-                with st.expander("Algorithm analysis", expanded=True):
-                    st.markdown(f"**What it computes:** {analysis.get('specification', 'Not identified')}")
-                    st.markdown(f"**Current complexity:** {analysis.get('current_complexity', 'Not provided')}")
-                    st.markdown(f"**Alternative:** {analysis.get('alternative', 'No better approach identified')}")
-                    st.markdown(f"**Alternative complexity:** {analysis.get('alternative_complexity', 'Not provided')}")
-                    tradeoffs = analysis.get("tradeoffs", [])
-                    if tradeoffs:
-                        st.markdown("**Tradeoffs:** " + "; ".join(str(item) for item in tradeoffs))
-                    if analysis.get("recommendation"):
-                        st.caption(f"Recommendation: {analysis['recommendation']}")
-            if suggestions:
-                for idx, suggestion in enumerate(suggestions):
-                    with st.expander(f"{suggestion.get('severity', 'info').title()} · lines {suggestion.get('line_start')}–{suggestion.get('line_end')}", expanded=(idx == 0)):
-                        st.write(suggestion.get("issue", ""))
-                        st.write("Reason:", suggestion.get("reason", ""))
-                        st.code(suggestion.get("original", ""), language="cpp")
-                        st.code(suggestion.get("optimized", ""), language="cpp")
-                        if st.button("Accept", key=f"accept_live_suggestion_{idx}"):
-                            st.session_state.editor_code = apply_suggestion_to_code(
-                                user_code,
-                                suggestion.get("line_start", 1),
-                                suggestion.get("line_end", 1),
-                                suggestion.get("optimized", ""),
-                                suggestion.get("original", ""),
-                            ) or user_code
-                            st.session_state.editor_version += 1
-                            st.session_state.live_suggestions_cache = []
-                            log_interaction("live_suggestion_accept", suggestion.get("issue", ""), user_code, "SUGGESTION")
-                            st.rerun(scope="app")
-                        if st.button("Dismiss", key=f"dismiss_live_suggestion_{idx}"):
-                            log_interaction("live_suggestion_dismiss", suggestion.get("issue", ""), user_code, "SUGGESTION")
-            else:
-                message = st.session_state.get("live_suggestions_message", "")
-                if message.startswith("Model request failed:"):
-                    st.error(message)
-                elif message:
-                    st.caption(message)
-                else:
-                    st.caption("Suggestions will appear after the model analyzes the current code.")
-
-            if st.button("Generate Optimal Code", key="generate_optimal_code_btn"):
-                with st.spinner("Generating an optimized version with the active model..."):
-                    optimized_code, change_list, verification_status = generate_optimal_program(
-                        user_code,
-                        st.session_state.get("live_diagnostics", []),
-                        {"return_code": 0, "stdout": st.session_state.get("last_stdout", ""), "stderr": st.session_state.get("last_stderr", "")},
-                        provider_name=live_ai_provider,
-                        gemini_model=gemini_optimal_model,
-                        ollama_model=ollama_optimal_model,
-                    )
-                    st.session_state.complete_optimal_code = {
-                        "code": optimized_code,
-                        "changes": change_list,
-                        "status": verification_status,
-                    }
-                    st.rerun(scope="app")
-
-    if st.session_state.get("complete_optimal_code"):
-        with st.expander("Complete Optimal Code", expanded=True):
-            block = st.session_state.complete_optimal_code
-            st.code(block["code"], language="cpp")
-            st.caption(block["status"])
-            st.write(block["changes"])
-            if st.button("Apply to editor", key="apply_complete_optimal_code"):
-                st.session_state.editor_code = block["code"]
-                st.session_state.editor_version += 1
-                log_interaction("apply_optimal_code", "Applied complete optimized program", user_code, "OPTIMIZATION")
-                st.rerun(scope="app")
-
-    # PROGRAM OUTPUT SECTION (shown after Compile & Analyze has run)
-    if st.session_state.get("last_status") is not None:
-        st.markdown("---")
-        st.subheader("📤 Program Output")
-        _status = st.session_state.last_status
-        _stdout = st.session_state.get("last_stdout", "")
-        _stderr = st.session_state.get("last_stderr", "")
-        _exit_code = st.session_state.get("last_exit_code")
-        _exec_time = st.session_state.get("last_execution_time", 0.0)
-        _timed_out = st.session_state.get("last_timed_out", False)
-
-        # c) Exit code and execution time
-        m_c1, m_c2, m_c3 = st.columns(3)
-        with m_c1:
-            if _timed_out:
-                st.metric("Exit Code", "Timed Out")
-            elif _exit_code is not None:
-                st.metric("Exit Code", str(_exit_code))
-            else:
-                st.metric("Exit Code", "0" if _status == 0 else str(_status))
-        with m_c2:
-            st.metric("Execution Time", f"{_exec_time:.3f} s" if _exec_time is not None else "0.000 s")
-        with m_c3:
-            if _status == 0:
-                st.markdown(f"<div style='margin-top: 10px;'>{ui_theme.badge('Success (0)', tone='success')}</div>", unsafe_allow_html=True)
-            elif _status == 2:
-                st.markdown(f"<div style='margin-top: 10px;'>{ui_theme.badge('Runtime Error', tone='error')}</div>", unsafe_allow_html=True)
-            elif _timed_out or _status == -1:
-                st.markdown(f"<div style='margin-top: 10px;'>{ui_theme.badge('Timed Out', tone='warning')}</div>", unsafe_allow_html=True)
-            else:
-                st.markdown(f"<div style='margin-top: 10px;'>{ui_theme.badge('Compile Error', tone='error')}</div>", unsafe_allow_html=True)
-
-        # a) The stdout in a st.code block
-        st.markdown(ui_theme.code_label("Standard Output (stdout)"), unsafe_allow_html=True)
-        if _stdout and _stdout.strip():
-            st.code(_stdout, language="text")
-        else:
-            st.code("(no output)", language="text")
-
-        # b) stderr (if any) in a separate st.code block or st.error
-        if _stderr and _stderr.strip():
-            st.markdown(ui_theme.code_label("Standard Error (stderr)"), unsafe_allow_html=True)
-            if _timed_out:
-                st.error(_stderr)
-            elif _status == 0:
-                st.code(_stderr, language="text")
-            else:
-                st.error(_stderr)
-
-    st.subheader("💬 AI Tutor Chat")
     
-    # Render Chat Container
-    chat_container = st.container(height=500)
-    
+    # 1. CHATBOT HEADER BANNER
+    active_chat_model_display = chat_ai_model if "chat_ai_model" in locals() else (live_ai_model if "live_ai_model" in locals() else "AI")
+    chat_header_html = f"""
+    <div class="chat-header-banner">
+        <div class="chat-title-group">
+            <span class="chat-bot-icon">🤖</span>
+            <div>
+                <div class="chat-header-title">AI Debugger & Tutor Chat</div>
+                <div class="chat-status-pill"><span class="chat-status-dot"></span> Online • Ready to Debug</div>
+            </div>
+        </div>
+        <span class="chat-model-badge">⚡ {active_chat_model_display}</span>
+    </div>
+    """
+    st.markdown(chat_header_html, unsafe_allow_html=True)
+
+    # 2. QUICK PROMPTS & ACTIONS (4 equal columns - no truncation)
+    qp_c1, qp_c2, qp_c3, qp_c4 = st.columns(4)
+    quick_prompt_action = None
+    with qp_c1:
+        if st.button("🔍 Explain", key="qp_explain", use_container_width=True, help="Explain this C++ code line-by-line"):
+            quick_prompt_action = f"Please explain what this C++ code does step-by-step:\n```cpp\n{user_code}\n```"
+    with qp_c2:
+        if st.button("🐛 Debug", key="qp_debug", use_container_width=True, help="Analyze bugs and compile/logic errors"):
+            quick_prompt_action = f"Analyze this C++ code for potential bugs, compile errors, or undefined behavior:\n```cpp\n{user_code}\n```"
+    with qp_c3:
+        if st.button("⚡ Optimize", key="qp_optimize", use_container_width=True, help="Suggest time and space optimizations"):
+            quick_prompt_action = f"How can this C++ code be optimized for better time and space efficiency?\n```cpp\n{user_code}\n```"
+    with qp_c4:
+        if st.button("🧪 Tests", key="qp_tests", use_container_width=True, help="Generate comprehensive test cases"):
+            quick_prompt_action = f"Generate 3-5 comprehensive test cases (with edge cases) for this C++ code:\n```cpp\n{user_code}\n```"
+
+    # 3. CHAT MESSAGE CONTAINER
+    chat_container = st.container(height=420)
     with chat_container:
         if len(st.session_state.messages) == 0:
-            ui_theme.show_status(
-                st,
-                "info",
-                "READY",
-                "Hit 'Compile & Analyze' to start the debugging session, or say hello!",
-                icon="ℹ️",
+            st.markdown(
+                """
+                <div class="chat-welcome-card">
+                    <div style="font-size: 1.15rem; font-weight: 750; margin-bottom: 0.35rem;">💬 Welcome to your AI C++ Tutor!</div>
+                    <p style="margin: 0; color: var(--ui-text-secondary); font-size: 0.85rem; line-height: 1.5;">
+                        Ask any question, click a quick prompt above, or click <strong>🚀 Compile & Analyze</strong> on the left to inspect live compiler and LLDB debugging!
+                    </p>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
-            
+
         # Display all previous messages
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
-                
-                # RESTORED: Render the code expander if it exists in this specific message
                 if "code_expander" in msg:
                     with st.expander("View Verified & Corrected Code"):
                         st.markdown(ui_theme.code_label("Corrected C++"), unsafe_allow_html=True)
                         st.code(msg["code_expander"], language="cpp")
-                
-    # The Chat Input Box for Follow-up Questions
-    if follow_up := st.chat_input("Ask a follow-up question (e.g., 'What does line 4 mean?'):"):
-        
-        # 1. Display user message immediately
-        st.session_state.messages.append({"role": "user", "content": follow_up})
+
+    # 4. CHAT UTILITY & INPUT
+    c_hint, c_clr = st.columns([3.5, 1.2])
+    with c_hint:
+        st.caption("💡 Type follow-up questions below or use the prompt pills above.")
+    with c_clr:
+        if st.button("🗑️ Clear Chat", key="clear_chat_col2", use_container_width=True, help="Clear chat history"):
+            st.session_state.messages = []
+            st.rerun()
+
+    follow_up = st.chat_input("Ask a follow-up question (e.g., 'What does line 4 mean?' or 'How to fix?'):")
+    active_prompt = quick_prompt_action or follow_up
+
+    if active_prompt:
+        st.session_state.messages.append({"role": "user", "content": active_prompt})
         with chat_container:
             with st.chat_message("user"):
-                st.markdown(follow_up)
-                
-        # 2. Build conversational context (pass the last few messages so the AI remembers)
+                st.markdown(active_prompt)
+
         conversation_history = f"You are a helpful C++ tutor. The user is currently working on this C++ code:\n```cpp\n{user_code}\n```\n"
         if st.session_state.get("last_status") is not None:
             stdin_ctx = st.session_state.get("stdin_input", "")
@@ -1142,24 +1365,22 @@ with col2:
                 f"- Exit Code: {exit_code_ctx}\n\n"
             )
         conversation_history += "Here is the recent conversation:\n"
-        for m in st.session_state.messages[-4:]: 
-            # We skip the code_expander content so we don't confuse the LLM prompt
+        for m in st.session_state.messages[-4:]:
             conversation_history += f"{m['role'].capitalize()}: {m['content']}\n"
         conversation_history += "Now, respond to the user's latest question concisely."
 
-        # 3. Get AI Response
         with chat_container:
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
                     ai_reply = get_ai_explanation(conversation_history)
                     st.markdown(ai_reply)
-                    
-        # 4. Save to Memory and JSON
+
         st.session_state.messages.append({"role": "assistant", "content": ai_reply})
         log_interaction(
-            user_prompt=follow_up,          # The question the user just typed
-            llm_response=ai_reply,          # The AI's conversational answer
-            code_snippet=user_code,         # The code currently in the editor
-            error_category="Follow-up Chat", 
-            fixed_code="N/A"                # No strict code fix for general chat
+            user_prompt=active_prompt,
+            llm_response=ai_reply,
+            code_snippet=user_code,
+            error_category="Follow-up Chat",
+            fixed_code="N/A",
         )
+        st.rerun()

@@ -38,15 +38,11 @@ _ENV_LOADED = False
 
 
 def _load_env_once() -> None:
-    global _ENV_LOADED
-    if _ENV_LOADED:
-        return
     try:
         from dotenv import load_dotenv
-        load_dotenv(Path(__file__).resolve().parent / ".env", override=False)
+        load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
     except ImportError:
         pass
-    _ENV_LOADED = True
 
 
 def _env(key: str, default: str = "") -> str:
@@ -218,15 +214,23 @@ def _call_gemini(
     exc_holder: dict[str, Exception] = {}
 
     def _do_generate():
-        try:
-            resp = client.models.generate_content(
-                model=gemini_model,
-                contents=prompt,
-                config=types.GenerateContentConfig(**gen_config_kwargs),
-            )
-            result_holder["text"] = resp.text or ""
-        except Exception as exc:
-            exc_holder["exc"] = exc
+        for attempt in range(2):
+            try:
+                resp = client.models.generate_content(
+                    model=gemini_model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(**gen_config_kwargs),
+                )
+                result_holder["text"] = resp.text or ""
+                exc_holder.clear()
+                return
+            except Exception as exc:
+                exc_holder["exc"] = exc
+                err_str = str(exc)
+                if ("503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str) and attempt == 0:
+                    time.sleep(1.5)
+                    continue
+                break
 
     with ThreadPoolExecutor(max_workers=1) as pool:
         fut = pool.submit(_do_generate)

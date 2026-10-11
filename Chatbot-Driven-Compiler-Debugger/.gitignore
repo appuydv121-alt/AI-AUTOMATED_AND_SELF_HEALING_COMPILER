@@ -1,17 +1,29 @@
-# Ignore Zip files and redundant folders
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Executables & compiler temporary artifacts
+*.exe
+*.bin
+*.o
+*.obj
+*.dSYM/
+temp_program*
+temp_source.cpp
+debug_target*
+
+# Archives and backup folders
 *.zip
 24CSB0A58_CD_Final_Codes/
 
-# Mac & Compiler Artifacts
-*.dSYM/
-*.bin
-temp_program
-temp_source.cpp
-debug_target.cpp
-
-# Logs and Data
+# Logs and transient files
 powermetrics_log.txt
-system_interactions.jsongithub_scraper.py
 
 # Secrets — never commit real keys
 .env

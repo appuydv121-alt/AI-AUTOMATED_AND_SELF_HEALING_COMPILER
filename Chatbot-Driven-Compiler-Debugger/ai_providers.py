@@ -35,7 +35,7 @@ def _load_dotenv_file(path: str | None = None) -> None:
                 key, value = line.split("=", 1)
                 key = key.strip()
                 value = value.strip().strip('"').strip("'")
-                os.environ.setdefault(key, value)
+                os.environ[key] = value
     except OSError:
         pass
 
@@ -59,7 +59,7 @@ class LLMProvider:
 
     def __init__(self, model: str | None = None, api_key: str | None = None):
         self.model = model or _DEFAULT_MODELS.get(self.provider_name, "")
-        self.api_key = api_key or _read_env(_ENV_KEYS.get(self.provider_name, ""), "")
+        self.api_key = _read_env(_ENV_KEYS.get(self.provider_name, ""), "") if api_key is None else api_key
 
     def generate(self, prompt: str, system: str | None = None, *, json_mode: bool = False, temperature: float = 0.1, max_tokens: int = 512, timeout: int = 20, progress_callback: Callable[[dict[str, Any]], None] | None = None) -> str:
         raise NotImplementedError
@@ -159,7 +159,7 @@ class GeminiProvider(LLMProvider):
 
     def __init__(self, model: str | None = None, api_key: str | None = None):
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
-        super().__init__(model=model or _read_env("GEMINI_MODEL", _DEFAULT_MODELS["gemini"]), api_key=api_key or _read_env("GEMINI_API_KEY", ""))
+        super().__init__(model=model or _read_env("GEMINI_MODEL", _DEFAULT_MODELS["gemini"]), api_key=api_key if api_key is not None else _read_env("GEMINI_API_KEY", ""))
 
     def is_available(self) -> bool:
         return bool(self.api_key)
@@ -211,7 +211,7 @@ class GroqProvider(LLMProvider):
     provider_name = "groq"
 
     def __init__(self, model: str | None = None, api_key: str | None = None):
-        super().__init__(model=model or _read_env("GROQ_MODEL", _DEFAULT_MODELS["groq"]), api_key=api_key or _read_env("GROQ_API_KEY", ""))
+        super().__init__(model=model or _read_env("GROQ_MODEL", _DEFAULT_MODELS["groq"]), api_key=api_key if api_key is not None else _read_env("GROQ_API_KEY", ""))
 
     def list_models(self) -> list[str]:
         if not self.api_key:
@@ -265,7 +265,7 @@ class OpenRouterProvider(LLMProvider):
     provider_name = "openrouter"
 
     def __init__(self, model: str | None = None, api_key: str | None = None):
-        super().__init__(model=model or _read_env("OPENROUTER_MODEL", _DEFAULT_MODELS["openrouter"]), api_key=api_key or _read_env("OPENROUTER_API_KEY", ""))
+        super().__init__(model=model or _read_env("OPENROUTER_MODEL", _DEFAULT_MODELS["openrouter"]), api_key=api_key if api_key is not None else _read_env("OPENROUTER_API_KEY", ""))
 
     def list_models(self) -> list[str]:
         if not self.api_key:

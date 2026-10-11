@@ -1311,3 +1311,31 @@ C:\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:5:15: error: i
       |               const char*
 ",N/A
 2026-10-02 02:23:03,❌ Time Limit Exceeded! Possible infinite loop.,Unknown,❌ Time Limit Exceeded! Possible infinite loop.,N/A
+2026-10-06 17:44:34,"C:\TOACD_PROJECT_FINAL\TOACD_PROJECT\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp: In function 'int main()':
+C:\TOACD_PROJECT_FINAL\TOACD_PROJECT\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:6:9: error: redeclaration of 'int name'
+    6 |     int name = 121;
+      |         ^~~~
+C:\TOACD_PROJECT_FINAL\TOACD_PROJECT\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:4:9: note: 'int name' previously declared here
+    4 |     int name = 12;
+      |         ^~~~
+",Unknown,"C:\TOACD_PROJECT_FINAL\TOACD_PROJECT\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp: In function 'int main()':
+C:\TOACD_PROJECT_FINAL\TOACD_PROJECT\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:6:9: error: redeclaration of 'int name'
+    6 |     int name = 121;
+      |         ^~~~
+C:\TOACD_PROJECT_FINAL\TOACD_PROJECT\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:4:9: note: 'int name' previously declared here
+    4 |     int name = 12;
+      |         ^~~~
+",N/A
+2026-10-11 16:02:42,"C:\TOACD_PROJECT_FINAL\TOACD_PROJECT\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp: In function 'int main()':
+C:\TOACD_PROJECT_FINAL\TOACD_PROJECT\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:7:15: error: invalid conversion from 'const char*' to 'int' [-fpermissive]
+    7 |     int age = ""twenty""; // This will cause a Type Mismatch
+      |               ^~~~~~~~
+      |               |
+      |               const char*
+",Unknown,"C:\TOACD_PROJECT_FINAL\TOACD_PROJECT\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp: In function 'int main()':
+C:\TOACD_PROJECT_FINAL\TOACD_PROJECT\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:7:15: error: invalid conversion from 'const char*' to 'int' [-fpermissive]
+    7 |     int age = ""twenty""; // This will cause a Type Mismatch
+      |               ^~~~~~~~
+      |               |
+      |               const char*
+",N/A

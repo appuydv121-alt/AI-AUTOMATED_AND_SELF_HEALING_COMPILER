@@ -219,9 +219,9 @@ def _parse_fallback(source: str) -> dict[str, Any]:
         for d in raw_decls:
             declarations.append({
                 "name": d.name,
-                "type": d.declared_type,
+                "type": d.type_text,
                 "line": d.line,
-                "has_initializer": d.initializer is not None and d.initializer != "",
+                "has_initializer": d.init_text is not None and d.init_text != "",
                 "scope_id": 0,
             })
         return {

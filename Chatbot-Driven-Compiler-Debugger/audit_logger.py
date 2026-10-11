@@ -3,7 +3,8 @@ import os
 from datetime import datetime
 
 # The file where our multi-turn chats will be saved
-LOG_FILE = "system_interactions.json"
+_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_FILE = os.path.join(_DIR, "system_interactions.json")
 
 def log_interaction(user_prompt, llm_response, code_snippet="N/A", error_category="N/A", fixed_code="N/A"):
     """
