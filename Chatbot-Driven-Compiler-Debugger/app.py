@@ -14,12 +14,13 @@ from fix_engine import validate_ai_fix
 from secure_scan import run_security_guardrail
 from error_classifier import classify_error, get_diagnostic_prompt
 from compiler_service import compile_and_run
-from audit_logger import log_interaction 
+from audit_logger import log_interaction, log_security_event 
 from error_logger import log_error 
 from lldb_engine import agentic_debug_loop 
 import diagnostic_engine as diag
 from semantic_analyzer import analyze_semantics, apply_safe_fixes
 import ui_theme
+from ui_themes import setup_ui, pane_marker, status_banner, get_theme, THEMES
 from ai_providers import get_provider_for_name
 from live_suggester import apply_suggestion_to_code, generate_optimal_program, render_live_suggestions
 import llm_provider as _llm_provider
@@ -112,11 +113,25 @@ def get_ollama_model_status(model_name: str = MODEL_NAME) -> dict[str, str | boo
 
 
 def get_ai_explanation(prompt, unavailable_message="AI check unavailable."):
-    """Send a prompt through the unified LLM provider (Gemini primary, Ollama fallback)."""
+    """Send a prompt through the unified LLM provider using current sidebar settings."""
     try:
+        prov = st.session_state.get("live_ai_provider", "gemini")
+        gem_mdl = (
+            st.session_state.get("gemini_chat_model_select")
+            or st.session_state.get("gemini_live_model_select")
+            or os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
+        )
+        oll_mdl = (
+            st.session_state.get("ollama_chat_model_select")
+            or st.session_state.get("ollama_live_model_select")
+            or os.environ.get("LIVE_MODEL", "qwen2.5-coder:3b")
+        )
         result, active_prov, active_mdl = _llm_provider.generate_task(
             "chat",
             prompt,
+            provider_name=prov,
+            gemini_model=gem_mdl,
+            ollama_model=oll_mdl,
         )
         if active_prov and active_mdl:
             st.session_state.last_served_provider = active_prov
@@ -294,10 +309,6 @@ def sync_live_diagnostics(user_code: str):
 def render_live_diagnostics():
     user_code = st.session_state.get("editor_code", "")
     sync_live_diagnostics(user_code)
-    if st.session_state.get("diagnostics_source_label") == "post-compile":
-        st.caption("Snapshot as of the last Compile & Analyze run.")
-    else:
-        st.caption("Live pre-compile analysis; compiler check runs after a brief pause.")
     st.markdown(
         diag.render_diagnostics_html(st.session_state.live_diagnostics),
         unsafe_allow_html=True,
@@ -539,13 +550,54 @@ def render_live_ai_optimizer_panel(
                 st.rerun(scope="app")
 
 
+# --- DYNAMIC ACTIVE MODEL RESOLUTION ---
+def get_active_model_and_provider() -> tuple[str, str]:
+    """Resolve currently active running model and provider dynamically (no hardcoding)."""
+    prov = st.session_state.get("live_ai_provider")
+    served_mdl = st.session_state.get("last_served_model")
+    served_prov = st.session_state.get("last_served_provider")
+
+    if prov == "ollama":
+        mdl = (
+            st.session_state.get("ollama_live_model_select")
+            or (served_mdl if served_prov == "ollama" else None)
+            or os.environ.get("LIVE_MODEL", "qwen2.5-coder:3b")
+        )
+        return mdl, "ollama"
+    elif prov == "gemini":
+        if served_prov == "ollama" and served_mdl:
+            return served_mdl, "ollama (fallback)"
+        mdl = (
+            st.session_state.get("gemini_live_model_select")
+            or (served_mdl if served_prov == "gemini" else None)
+            or os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
+        )
+        return mdl, "gemini"
+
+    if served_mdl and served_prov:
+        return served_mdl, served_prov
+
+    if not os.environ.get("GEMINI_API_KEY"):
+        return os.environ.get("LIVE_MODEL", "qwen2.5-coder:3b"), "ollama"
+    return os.environ.get("GEMINI_MODEL", "gemini-3.5-flash"), "gemini"
+
+
 # --- UI CONFIGURATION ---
-st.set_page_config(page_title="AI C++ Debugger", layout="wide")
-active_ui_theme = ui_theme.inject_theme(st)
+st.set_page_config(page_title="AI C++ Debugger", layout="wide", initial_sidebar_state="expanded")
+if "theme_initialized" not in st.session_state:
+    st.session_state.theme_initialized = True
+    st.session_state.ui_theme = "Forest Dev"
+
+_curr_model, _curr_prov = get_active_model_and_provider()
+_active_theme_dict = setup_ui(model_name=_curr_model, provider=_curr_prov)
+active_ui_theme = _active_theme_dict["scheme"]
 
 # Initialize Chat Memory in Session State
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+if "messages" not in st.session_state or len(st.session_state.messages) == 0:
+    st.session_state.messages = [
+        {"role": "user", "content": "Explain what this code does, step by step."},
+        {"role": "assistant", "content": "1. **Include iostream.** Gives you cout for output.\\n2. **Use namespace std.** Lets you skip the `std::` prefix.\\n3. **Define main.** Execution starts here."},
+    ]
 
 if "editor_version" not in st.session_state:
     st.session_state.editor_version = 0
@@ -671,7 +723,7 @@ provider_choices = ["gemini", "ollama"]
 live_ai_provider = st.sidebar.selectbox("Provider", options=provider_choices, index=0, key="live_ai_provider")
 cloud_opt_in = st.sidebar.checkbox("Enable cloud providers", value=True, key="cloud_opt_in", disabled=True, help="Gemini is the primary provider; Ollama is automatic fallback.")
 
-_gemini_models = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash"]
+_gemini_models = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.8-flash"]
 _ollama_models = ["qwen2.5-coder:3b", "qwen2.5-coder:7b", "llama3:latest"]
 
 if live_ai_provider == "gemini":
@@ -685,11 +737,23 @@ if live_ai_provider == "gemini":
 else:
     live_ai_model = st.sidebar.selectbox("Live model", options=_ollama_models, index=0, key="ollama_live_model_select")
     optimal_ai_model = st.sidebar.selectbox("Optimal model", options=_ollama_models, index=1 if len(_ollama_models) > 1 else 0, key="ollama_optimal_model_select")
-    chat_ai_model = st.sidebar.selectbox("Chat model", options=_ollama_models, index=1 if len(_ollama_models) > 1 else 0, key="ollama_chat_model_select")
-    gemini_live_model = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite").strip() or "gemini-3.1-flash-lite"
+    chat_ai_model = st.sidebar.selectbox("Chat model", options=_ollama_models, index=0, key="ollama_chat_model_select")
+    gemini_live_model = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash").strip() or "gemini-3.5-flash"
     gemini_optimal_model = gemini_live_model
     ollama_live_model = live_ai_model
     ollama_optimal_model = optimal_ai_model
+
+# Synchronize currently active model state with user selection
+if live_ai_provider == "ollama":
+    st.session_state["live_suggestions_active_provider"] = "ollama"
+    st.session_state["live_suggestions_active_model"] = live_ai_model
+    st.session_state["last_served_model"] = live_ai_model
+    st.session_state["last_served_provider"] = "ollama"
+elif live_ai_provider == "gemini":
+    st.session_state["live_suggestions_active_provider"] = "gemini"
+    st.session_state["live_suggestions_active_model"] = live_ai_model
+    st.session_state["last_served_model"] = live_ai_model
+    st.session_state["last_served_provider"] = "gemini"
 
 if live_ai_provider == "ollama":
     ollama_status = get_ollama_model_status(live_ai_model)
@@ -708,23 +772,7 @@ elif live_ai_provider == "gemini":
     )
     st.sidebar.caption(_msg)
 
-st.markdown(
-    """
-    <div class="app-hero-header">
-        <div class="app-hero-top-row">
-            <span class="app-hero-badge">⚡ AI-POWERED • SELF-HEALING C++ COMPILER</span>
-            <div class="app-hero-chips">
-                <span class="app-hero-chip">🛡️ Memory Sandbox</span>
-                <span class="app-hero-chip">🌿 Green Compiler</span>
-                <span class="app-hero-chip">💬 LLM Tutor</span>
-            </div>
-        </div>
-        <h1 class="app-hero-title">Chatbot-Driven C++ Compiler & Debugger</h1>
-        <p class="app-hero-subtitle">Interactive LLM Tutoring • Real-time AST Reasoning • Sandboxed Execution • Deep Diagnostics</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+# Hero banner replaced by setup_ui() slim header above.
 
 if "editor_width_pct" not in st.session_state:
     st.session_state.editor_width_pct = 50
@@ -744,20 +792,13 @@ else:
 # LEFT COLUMN: THE CODE EDITOR & COMPILER
 
 with col1:
-    st.markdown('<div class="ui-panel-anchor ui-editor-panel"></div>', unsafe_allow_html=True)
-    c_hdr1, c_hdr2 = st.columns([3.5, 1.2])
-    with c_hdr1:
-        st.subheader("📝 C++ Code Editor")
-    with c_hdr2:
-        if st.button("⇄ Swap Panels", key="btn_w_swap", use_container_width=True, help="Swap left and right panels"):
-            st.session_state.layout_swapped = not st.session_state.layout_swapped
-            st.rerun()
+    pane_marker("left")
 
     default_code = """#include <iostream>
 using namespace std;
 
 int main() {
-    int age = "twenty"; // This will cause a Type Mismatch
+    int age = 20;
     cout << age << endl;
     return 0;
 }"""
@@ -769,9 +810,9 @@ int main() {
     editor_value = st_ace(
         value=st.session_state.editor_code,
         language="c_cpp",
-        theme=ui_theme.ace_theme(active_ui_theme),
+        theme=_active_theme_dict["editor"],
         keybinding="vscode",
-        height=400,
+        height=275,
         font_size=14,
         tab_size=4,
         wrap=False,
@@ -782,11 +823,29 @@ int main() {
     )
     user_code = editor_value if isinstance(editor_value, str) else st.session_state.editor_code
     st.session_state.editor_code = user_code
+    st.html("""<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" onload="
+    try {
+      document.querySelectorAll('iframe[src*=streamlit_ace], iframe[title*=streamlit_ace]').forEach(f => {
+        f.style.border = '1px solid ' + getComputedStyle(document.documentElement).getPropertyValue('--border');
+        f.style.borderRadius = '12px';
+        const doc = f.contentDocument;
+        if(doc) {
+          const ed = doc.querySelector('.ace_editor');
+          if(ed) {
+            ed.style.border = 'none';
+            ed.style.outline = 'none';
+            ed.style.boxShadow = 'none';
+          }
+        }
+      });
+    } catch(e) {}
+    this.remove();
+    " style="display:none;">""")
 
     if st.session_state.last_compiled_code is not None and user_code != st.session_state.last_compiled_code:
         reset_execution_state()
 
-    # --- INLINE LIVE DIAGNOSTICS & SUGGESTION ON THE EDITOR ITSELF ---
+    # --- INLINE LIVE DIAGNOSTICS & STATUS PILL ---
     current_diags = sync_live_diagnostics(user_code)
     ace_annotations = []
     if current_diags:
@@ -804,60 +863,38 @@ int main() {
                 except Exception:
                     pass
 
-        # Sync with Ace Editor gutter in real-time
-        st.html(f"<img src=x onerror=\"if(window.__setAceAnnotations)window.__setAceAnnotations({json.dumps(ace_annotations)});this.remove();\" style=\"display:none;\">")
-
-        # Primary error details
+        import base64
+        b64_ann = base64.b64encode(json.dumps(ace_annotations).encode("utf-8")).decode("ascii")
+        st.html(
+            f'<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" '
+            f'onload="try{{const a=JSON.parse(atob(\'{b64_ann}\'));'
+            f'if(window.parent&&window.parent.__setAceAnnotations)window.parent.__setAceAnnotations(a);'
+            f'else if(window.__setAceAnnotations)window.__setAceAnnotations(a);}}catch(e){{}}this.remove();" '
+            f'style="display:none;">'
+        )
         primary_diag = current_diags[0]
         p_line = primary_diag.get("line")
-        p_line_txt = f"Line {p_line} • " if p_line else ""
-        p_cat = primary_diag.get("category", "ERROR")
-        p_label = diag.CATEGORY_LABELS.get(p_cat, p_cat)
-        p_icon = diag.CATEGORY_ICONS.get(p_cat, "❌")
-        p_msg = primary_diag.get("message", primary_diag.get("title", ""))
-
-        # Smart quick fix hints
-        p_fix_hint = ""
-        p_msg_l = p_msg.lower()
-        if "invalid conversion" in p_msg_l or "cannot convert" in p_msg_l:
-            p_fix_hint = "💡 <b>Quick Suggestion:</b> Type mismatch detected. Assign an integer literal (e.g. <code>int age = 20;</code>) or change type to <code>std::string age = \"twenty\";</code>."
-        elif "was not declared in this scope" in p_msg_l:
-            p_fix_hint = "💡 <b>Quick Suggestion:</b> Identifier was not declared. Check spelling or declare the variable before using it."
-        elif "expected ';'" in p_msg_l:
-            p_fix_hint = "💡 <b>Quick Suggestion:</b> Missing semicolon <code>;</code> at the end of the statement."
-        elif primary_diag.get("fix"):
-            p_fix_hint = f"💡 <b>Quick Suggestion:</b> {html.escape(primary_diag['fix'])}"
-
-        st.markdown(
-            f"""
-            <div class="editor-live-error-badge">
-                <div class="editor-error-header">
-                    <span class="editor-error-tag">{p_icon} {p_line_txt}{p_label}</span>
-                    <span class="editor-error-sub">Live AST & Compiler Detection</span>
-                </div>
-                <div class="editor-error-message">{html.escape(p_msg)}</div>
-                {f'<div class="editor-error-fix">{p_fix_hint}</div>' if p_fix_hint else ''}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        p_line_txt = f"Line {p_line}: " if p_line else ""
+        p_msg = primary_diag.get("message", primary_diag.get("title", "Syntax or type issue detected"))
+        status_banner("err", f"{p_line_txt}{p_msg}")
     else:
-        st.html("<img src=x onerror=\"if(window.__setAceAnnotations)window.__setAceAnnotations([]);this.remove();\" style=\"display:none;\">")
-        st.markdown(
-            """
-            <div class="editor-live-clean-badge">
-                <span>✅</span> <span>No syntax or type errors detected in editor. Ready to compile!</span>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        st.html(
+            '<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" '
+            'onload="try{if(window.parent&&window.parent.__setAceAnnotations)window.parent.__setAceAnnotations([]);'
+            'else if(window.__setAceAnnotations)window.__setAceAnnotations([]);}catch(e){}this.remove();" '
+            'style="display:none;">'
         )
+        status_banner("ok", "No syntax or type errors. Ready to compile.")
 
-    # ── EXPANDERS FROM SCREENSHOT 2: LIVE DIAGNOSTICS & AI SUGGESTIONS ──
-    diag_status = f" ({len(current_diags)} finding{'s' if len(current_diags) > 1 else ''} ⚠️)" if current_diags else " (Clean ✅)"
-    with st.expander(f"🩺 Live Diagnostics & Static AST Linter{diag_status}", expanded=False):
-        render_live_diagnostics()
+    # --- TABS: DIAGNOSTICS | AI SUGGESTIONS | INPUT (STDIN) ---
+    t_diag, t_ai, t_stdin = st.tabs(["Diagnostics", "AI suggestions", "Input (stdin)"])
+    with t_diag:
+        if not current_diags:
+            st.markdown('<div style="padding: 0.6rem 0; font-size: 0.88rem; color: var(--muted);">Clean. 0 errors, 0 warnings.</div>', unsafe_allow_html=True)
+        else:
+            render_live_diagnostics()
 
-    with st.expander("💡 Live AI Code Suggestions & Optimizer", expanded=False):
+    with t_ai:
         render_live_ai_optimizer_panel(
             user_code=user_code,
             live_ai_enabled=live_ai_enabled,
@@ -868,19 +905,17 @@ int main() {
             gemini_optimal_model=gemini_optimal_model,
             ollama_optimal_model=ollama_optimal_model,
         )
-    
-    # Program Input (stdin)
-    st.text_area(
-        label="Program Input (stdin)",
-        placeholder="Enter input here, exactly as you'd type it in a terminal (one value per line or space-separated)",
-        height=120,
-        key="stdin_input",
-    )
-    st.caption("This input is fed to your program's stdin when you click Compile & Analyze.")
-    if len(st.session_state.get("stdin_input", "")) > 100 * 1024:
-        st.warning("⚠️ Program input exceeds 100KB and will be capped at 100KB during execution.")
 
-    compile_btn = st.button("🚀 Compile & Analyze", type="primary", use_container_width=True)
+    with t_stdin:
+        st.text_area(
+            label="stdin",
+            label_visibility="collapsed",
+            placeholder="Enter input here (one value per line or space-separated)...",
+            height=85,
+            key="stdin_input",
+        )
+
+    compile_btn = st.button("▷ Compile and analyze", type="primary", use_container_width=True, key="btn_compile_run")
 
     if compile_btn:
         if not user_code.strip():
@@ -894,9 +929,9 @@ int main() {
             # 1. Security Scan
             is_safe, warning_msg = run_security_guardrail(user_code)
             
-            
             if not is_safe:
                 stop_and_save_metrics(tracker, start_time)
+                log_security_event(user_code, warning_msg, user_action="Compile Blocked (Pre-Execution Gate)")
                 ui_theme.show_status(st, "error", "SECURITY BLOCK", warning_msg, icon="🚫")
                 st.stop() 
 
@@ -1274,57 +1309,27 @@ int main() {
 # RIGHT COLUMN: THE MULTI-TURN AI CHAT
 
 with col2:
-    st.markdown('<div class="ui-panel-anchor ui-diagnostics-panel"></div>', unsafe_allow_html=True)
+    pane_marker("right")
     
-    # 1. CHATBOT HEADER BANNER
-    active_chat_model_display = chat_ai_model if "chat_ai_model" in locals() else (live_ai_model if "live_ai_model" in locals() else "AI")
-    chat_header_html = f"""
-    <div class="chat-header-banner">
-        <div class="chat-title-group">
-            <span class="chat-bot-icon">🤖</span>
-            <div>
-                <div class="chat-header-title">AI Debugger & Tutor Chat</div>
-                <div class="chat-status-pill"><span class="chat-status-dot"></span> Online • Ready to Debug</div>
-            </div>
-        </div>
-        <span class="chat-model-badge">⚡ {active_chat_model_display}</span>
-    </div>
-    """
-    st.markdown(chat_header_html, unsafe_allow_html=True)
-
-    # 2. QUICK PROMPTS & ACTIONS (4 equal columns - no truncation)
+    # 1. QUICK PROMPT PILLS (Explain, Debug, Optimize, Tests)
     qp_c1, qp_c2, qp_c3, qp_c4 = st.columns(4)
     quick_prompt_action = None
     with qp_c1:
-        if st.button("🔍 Explain", key="qp_explain", use_container_width=True, help="Explain this C++ code line-by-line"):
-            quick_prompt_action = f"Please explain what this C++ code does step-by-step:\n```cpp\n{user_code}\n```"
+        if st.button("Explain", key="pill_explain", use_container_width=True):
+            quick_prompt_action = "Explain what this code does, step by step."
     with qp_c2:
-        if st.button("🐛 Debug", key="qp_debug", use_container_width=True, help="Analyze bugs and compile/logic errors"):
+        if st.button("Debug", key="pill_debug", use_container_width=True):
             quick_prompt_action = f"Analyze this C++ code for potential bugs, compile errors, or undefined behavior:\n```cpp\n{user_code}\n```"
     with qp_c3:
-        if st.button("⚡ Optimize", key="qp_optimize", use_container_width=True, help="Suggest time and space optimizations"):
+        if st.button("Optimize", key="pill_optimize", use_container_width=True):
             quick_prompt_action = f"How can this C++ code be optimized for better time and space efficiency?\n```cpp\n{user_code}\n```"
     with qp_c4:
-        if st.button("🧪 Tests", key="qp_tests", use_container_width=True, help="Generate comprehensive test cases"):
+        if st.button("Tests", key="pill_tests", use_container_width=True):
             quick_prompt_action = f"Generate 3-5 comprehensive test cases (with edge cases) for this C++ code:\n```cpp\n{user_code}\n```"
 
-    # 3. CHAT MESSAGE CONTAINER
+    # 2. CHAT MESSAGE STREAM
     chat_container = st.container(height=420)
     with chat_container:
-        if len(st.session_state.messages) == 0:
-            st.markdown(
-                """
-                <div class="chat-welcome-card">
-                    <div style="font-size: 1.15rem; font-weight: 750; margin-bottom: 0.35rem;">💬 Welcome to your AI C++ Tutor!</div>
-                    <p style="margin: 0; color: var(--ui-text-secondary); font-size: 0.85rem; line-height: 1.5;">
-                        Ask any question, click a quick prompt above, or click <strong>🚀 Compile & Analyze</strong> on the left to inspect live compiler and LLDB debugging!
-                    </p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        # Display all previous messages
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
@@ -1333,16 +1338,8 @@ with col2:
                         st.markdown(ui_theme.code_label("Corrected C++"), unsafe_allow_html=True)
                         st.code(msg["code_expander"], language="cpp")
 
-    # 4. CHAT UTILITY & INPUT
-    c_hint, c_clr = st.columns([3.5, 1.2])
-    with c_hint:
-        st.caption("💡 Type follow-up questions below or use the prompt pills above.")
-    with c_clr:
-        if st.button("🗑️ Clear Chat", key="clear_chat_col2", use_container_width=True, help="Clear chat history"):
-            st.session_state.messages = []
-            st.rerun()
-
-    follow_up = st.chat_input("Ask a follow-up question (e.g., 'What does line 4 mean?' or 'How to fix?'):")
+    # 3. STICKY CHAT INPUT
+    follow_up = st.chat_input("Ask a follow-up question")
     active_prompt = quick_prompt_action or follow_up
 
     if active_prompt:

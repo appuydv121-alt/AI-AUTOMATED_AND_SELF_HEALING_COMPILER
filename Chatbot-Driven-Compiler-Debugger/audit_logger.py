@@ -36,3 +36,23 @@ def log_interaction(user_prompt, llm_response, code_snippet="N/A", error_categor
     # 3. Write it back to the JSON file (indent=4)
     with open(LOG_FILE, "w", encoding="utf-8") as file:
         json.dump(data, file, indent=4)
+
+
+def log_security_event(code_snippet: str, threat_message: str, user_action: str = "Pre-Execution Security Block"):
+    """
+    Appends an intercepted threat to a dedicated security audit log.
+    Ensures an auditable paper trail proving malicious code was intercepted without execution.
+    """
+    security_file = os.path.join(_DIR, "security_audit.log")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    entry = (
+        f"[{timestamp}] [THREAT_INTERCEPTED] Action: {user_action}\n"
+        f"Triggered Rule: {threat_message}\n"
+        f"Code Excerpt:\n{code_snippet[:400]}\n"
+        f"{'='*70}\n"
+    )
+    try:
+        with open(security_file, "a", encoding="utf-8") as f:
+            f.write(entry)
+    except OSError:
+        pass

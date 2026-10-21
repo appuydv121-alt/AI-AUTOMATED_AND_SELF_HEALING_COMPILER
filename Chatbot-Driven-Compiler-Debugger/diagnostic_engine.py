@@ -709,73 +709,90 @@ def render_diagnostics_markdown(diagnostics):
 
 
 def render_diagnostics_html(diagnostics):
-    """Render the existing diagnostic records as accessible, severity-coded status blocks."""
+    """Render diagnostic records as clean, modern IDE diagnostic cards."""
     if not diagnostics:
-        empty_message = (
-            "No immediate issues detected. (This does not guarantee the code is fully correct — "
-            "it means no local checks or compiler diagnostics found a problem yet.)"
+        return (
+            '<div class="diag-card diag-card-success">'
+            '<div class="diag-card-top">'
+            '<span class="diag-badge diag-badge-success">CLEAN</span>'
+            '</div>'
+            '<div class="diag-msg">No syntax or compiler issues detected. Ready to compile.</div>'
+            '</div>'
         )
-        block = ui_theme.severity_block("success", "NO ISSUES", empty_message, icon="✓")
-        return f'<section aria-label="AI Code Analysis"><h3>🔎 AI Code Analysis</h3>{block}</section>'
 
     tone_by_category = {
-        "ERROR": ("error", "❌"),
-        "BUG": ("error", "🐛"),
-        "SECURITY_CRITICAL": ("error", "🚫"),
-        "LIKELY_BUG": ("warning", "⚠️"),
-        "SECURITY_WARNING": ("warning", "⚠️"),
-        "WARNING": ("warning", "⚠️"),
-        "POTENTIAL_ISSUE": ("info", "❓"),
-        "SMELL": ("info", "👃"),
-        "OPTIMIZATION": ("suggestion", "⚡"),
-        "SUGGESTION": ("suggestion", "💡"),
+        "ERROR": "error",
+        "BUG": "error",
+        "SECURITY_CRITICAL": "error",
+        "LIKELY_BUG": "warning",
+        "SECURITY_WARNING": "warning",
+        "WARNING": "warning",
+        "POTENTIAL_ISSUE": "info",
+        "SMELL": "info",
+        "OPTIMIZATION": "suggestion",
+        "SUGGESTION": "suggestion",
     }
-    severity_counts = {}
-    for diagnostic in diagnostics:
-        label = CATEGORY_LABELS.get(diagnostic["category"], diagnostic["category"])
-        severity_counts[label] = severity_counts.get(label, 0) + 1
 
-    count_markup = "".join(
-        f'<span class="ui-chip ui-status-{tone}">{html.escape(label)} {count}</span>'
-        for label, count, tone in (
-            ("ERROR", severity_counts.get("SYNTAX ERROR", 0) + severity_counts.get("BUG", 0), "error"),
-            ("WARNING", severity_counts.get("WARNING", 0) + severity_counts.get("SECURITY WARNING", 0) + severity_counts.get("LIKELY BUG", 0), "warning"),
-            ("INFO", severity_counts.get("POTENTIAL ISSUE", 0) + severity_counts.get("CODE SMELL", 0), "info"),
-            ("SUGGESTION", severity_counts.get("SUGGESTION", 0) + severity_counts.get("OPTIMIZATION", 0), "suggestion"),
-        )
-        if count
-    )
-    blocks = []
-    for diagnostic in diagnostics:
-        category = diagnostic["category"]
-        tone, icon = tone_by_category.get(category, ("info", "•"))
+    total_errors = sum(1 for d in diagnostics if tone_by_category.get(d.get("category", ""), "info") == "error")
+    total_warns = sum(1 for d in diagnostics if tone_by_category.get(d.get("category", ""), "info") == "warning")
+    total_infos = len(diagnostics) - total_errors - total_warns
+
+    pills = []
+    if total_errors:
+        pills.append(f'<span class="diag-pill diag-pill-error">{total_errors} {"Error" if total_errors == 1 else "Errors"}</span>')
+    if total_warns:
+        pills.append(f'<span class="diag-pill diag-pill-warning">{total_warns} {"Warning" if total_warns == 1 else "Warnings"}</span>')
+    if total_infos and not total_errors and not total_warns:
+        pills.append(f'<span class="diag-pill diag-pill-info">{total_infos} Notice{"s" if total_infos > 1 else ""}</span>')
+
+    pills_markup = "".join(pills)
+
+    cards = []
+    for d in diagnostics:
+        category = d.get("category", "ERROR")
+        tone = tone_by_category.get(category, "info")
         label = CATEGORY_LABELS.get(category, category)
-        line = f"Line {diagnostic['line']}" if diagnostic.get("line") else None
-        details = []
-        if diagnostic.get("why"):
-            details.append(("Why", diagnostic["why"]))
-        if diagnostic.get("fix"):
-            details.append(("Suggested fix", diagnostic["fix"]))
-        semantic = diagnostic.get("semantic")
+        line = f"Line {d['line']}" if d.get("line") else None
+
+        line_html = f'<span class="diag-line-tag">{html.escape(line)}</span>' if line else ""
+
+        detail_items = []
+        if d.get("why"):
+            detail_items.append(
+                f'<div class="diag-detail-row"><span class="diag-detail-lbl">Why:</span> <span class="diag-detail-val">{html.escape(d["why"])}</span></div>'
+            )
+        if d.get("fix"):
+            detail_items.append(
+                f'<div class="diag-detail-row fix"><span class="diag-detail-lbl">💡 Suggested fix:</span> <span class="diag-detail-val">{html.escape(d["fix"])}</span></div>'
+            )
+        semantic = d.get("semantic")
         if semantic:
-            details.append((
-                "Type check",
-                f"{semantic['declared_type']} vs {semantic['expected_category']} "
-                f"({semantic['confidence_label'].lower()} confidence).",
-            ))
-        blocks.append(ui_theme.severity_block(
-            tone,
-            label,
-            diagnostic["message"],
-            icon=icon,
-            line=line,
-            details=tuple(details),
-        ))
+            detail_items.append(
+                f'<div class="diag-detail-row"><span class="diag-detail-lbl">Type check:</span> '
+                f'<span class="diag-detail-val">{html.escape(semantic["declared_type"])} vs {html.escape(semantic["expected_category"])} '
+                f'({html.escape(semantic["confidence_label"].lower())} confidence)</span></div>'
+            )
+
+        details_html = f'<div class="diag-details-box">{"".join(detail_items)}</div>' if detail_items else ""
+        msg_html = html.escape(d.get("message", ""))
+
+        cards.append(
+            f'<div class="diag-card diag-card-{tone}">'
+            f'<div class="diag-card-top">'
+            f'<span class="diag-badge diag-badge-{tone}">{html.escape(label)}</span>'
+            f'{line_html}'
+            f'</div>'
+            f'<div class="diag-msg">{msg_html}</div>'
+            f'{details_html}'
+            f'</div>'
+        )
 
     return (
-        '<section aria-label="AI Code Analysis">'
-        '<div class="ui-diagnostic-header"><h3>🔎 AI Code Analysis</h3>'
-        f'<div class="ui-diagnostic-counts">{count_markup}</div></div>'
-        + "".join(blocks)
-        + "</section>"
+        '<div class="diag-container">'
+        '<div class="diag-header-bar">'
+        '<span class="diag-title">Diagnostics</span>'
+        f'<div class="diag-pills-wrap">{pills_markup}</div>'
+        '</div>'
+        + "".join(cards)
+        + '</div>'
     )

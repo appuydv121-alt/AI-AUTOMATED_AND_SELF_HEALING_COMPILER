@@ -134,7 +134,10 @@ _ACE_THEME_SCRIPT = """
         const app = doc.querySelector('[data-testid="stApp"]');
         if (!app) return;
         const scheme = win.getComputedStyle(app).colorScheme;
-        const themeName = scheme === "dark" ? "ace/theme/tomorrow_night" : "ace/theme/chrome";
+        // Use our custom theme if set, otherwise fall back by scheme
+        const customTheme = win.__aceThemeName;
+        const themeName = customTheme ||
+            (scheme === "dark" ? "ace/theme/tomorrow_night" : "ace/theme/xcode");
         doc.querySelectorAll('iframe[src*="streamlit_ace"]').forEach((frame) => {
             try {
                 const editorElement = frame.contentDocument && frame.contentDocument.querySelector(".ace_editor");
@@ -142,6 +145,10 @@ _ACE_THEME_SCRIPT = """
                 if (!editorElement || !ace) return;
                 const editor = ace.edit(editorElement);
                 if (editor.getTheme() !== themeName) editor.setTheme(themeName);
+                // Clean up border styling on inner element
+                editorElement.style.border = 'none';
+                editorElement.style.boxShadow = 'none';
+                editorElement.style.outline = 'none';
                 if (win.__currentAceAnnotations && win.__currentAceAnnotations.length) {
                     editor.getSession().setAnnotations(win.__currentAceAnnotations);
                 }

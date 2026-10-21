@@ -1,6 +1,7 @@
 import subprocess
 import os
 import time
+from secure_scan import run_security_guardrail
 
 
 class RunResult(tuple):
@@ -32,12 +33,24 @@ class RunResult(tuple):
 def compile_and_run(cpp_code: str, stdin_input: str = "", timeout_compile: int = 10, timeout_run: int = 5) -> RunResult:
     """
     Compiles with '-g' for LLDB support and runs the code with optional stdin input.
+    Validates code against static pre-execution security guardrails before compiling.
     Returns: RunResult (status_code, stdout, stderr)
       0 = Success
-      1 = Compile Error
+      1 = Compile Error / Security Block
       2 = Runtime Error (Segfault/Crash/Non-zero Exit Code)
      -1 = Timeout/System Error
     """
+    # 0. DEFENSE-IN-DEPTH: Static Pre-Execution Security Gate
+    is_safe, warning_msg = run_security_guardrail(cpp_code)
+    if not is_safe:
+        return RunResult(
+            1,
+            "",
+            f"🚫 SECURITY GUARDRAIL BLOCKED:\n{warning_msg}\n\nExecution was aborted before compiling or running to protect your system.",
+            exit_code=1,
+            execution_time=0.0
+        )
+
     app_dir = os.path.dirname(os.path.abspath(__file__))
     source_file = os.path.join(app_dir, "temp_source.cpp")
     executable_base = os.path.join(app_dir, "temp_program")
@@ -67,9 +80,9 @@ def compile_and_run(cpp_code: str, stdin_input: str = "", timeout_compile: int =
 
     compile_start = time.time()
     try:
-        # 1. COMPILE (Now with -g for debug symbols!)
+        # 1. COMPILE (Now with -g for debug symbols and hardening flags)
         compile_process = subprocess.run(
-            ["g++", "-g", source_file, "-o", executable_base], 
+            ["g++", "-g", "-fstack-protector-strong", "-fmax-errors=5", source_file, "-o", executable_base], 
             capture_output=True, 
             text=True, 
             timeout=timeout_compile

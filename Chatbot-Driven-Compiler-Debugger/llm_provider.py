@@ -55,9 +55,9 @@ def _GEMINI_API_KEY() -> str:  # type: ignore[assignment]
 
 
 # Model defaults — configurable via .env
-# Primary fast model: gemini-3.1-flash-lite
-# Higher quality option: gemini-3.5-flash
-_DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
+# Primary fast, stable model: gemini-3.5-flash
+# Alternative options: gemini-3.1-flash-lite, gemini-3.8-flash
+_DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
 _GEMINI_MODEL    = _env("GEMINI_MODEL", _DEFAULT_GEMINI_MODEL)
 _LIVE_MODEL      = _env("LIVE_MODEL",   "qwen2.5-coder:3b")
 _CODEGEN_MODEL   = _env("CODEGEN_MODEL", "qwen2.5-coder:7b")
@@ -67,7 +67,7 @@ _OLLAMA_URL      = _env("OLLAMA_HOST",  "http://localhost:11434").rstrip("/")
 _OLLAMA_MAX_TOKENS: dict[str, int] = {
     "live_suggestions": 400,
     "optimal_code":     1200,
-    "chat":             1024,
+    "chat":             512,
     "reasoning":        512,
     "default":          512,
 }
@@ -78,8 +78,8 @@ _GEMINI_MAX_TOKENS: dict[str, int] = {
     "reasoning":        1024,
     "default":          512,
 }
-_GEMINI_TIMEOUT  = 15   # seconds
-_OLLAMA_TIMEOUT  = 90   # seconds
+_GEMINI_TIMEOUT  = 20   # seconds
+_OLLAMA_TIMEOUT  = 180  # seconds (allows CPU inference to finish reliably)
 
 # ── Disk cache ───────────────────────────────────────────────────────────────
 _CACHE_DIR = Path(__file__).resolve().parent / ".llm_cache"
@@ -425,8 +425,8 @@ def generate_task(
 
     # ── Resolve Ollama model (strictly separate from Gemini) ───────────────
     default_ollama = (
-        _env("LIVE_MODEL", "qwen2.5-coder:3b") if task == "live_suggestions"
-        else _env("CODEGEN_MODEL", "qwen2.5-coder:7b")
+        _env("CODEGEN_MODEL", "qwen2.5-coder:7b") if task == "optimal_code"
+        else _env("LIVE_MODEL", "qwen2.5-coder:3b")
     )
     if ollama_model and not ollama_model.startswith("gemini"):
         eff_ollama_model = ollama_model
