@@ -33,7 +33,7 @@ def agentic_debug_loop(cpp_code, crash_output, executable_path="./temp_program")
     Allows Llama 3 to autonomously run LLDB commands to inspect memory.
     """
     
-    print("\n[SYSTEM] 🤖 Initiating Agentic LLDB Loop...")
+    print("\n[SYSTEM] Initiating Agentic LLDB Loop...")
     
     # 1. The Strict Agentic System Prompt
     agent_prompt = f"""You are an Autonomous C++ Debugger running on Apple Silicon.

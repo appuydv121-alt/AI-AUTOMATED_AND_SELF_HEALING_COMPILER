@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 # ── Env config ──────────────────────────────────────────────────────────────
 # Re-read env at call time (via _env()) so .env edits take effect without restart.
 _ENV_LOADED = False
+_CURRENT_GEMINI_KEY_INDEX = 0
+_RUNTIME_GEMINI_KEYS: list[str] | None = None
 
 
 def _load_env_once() -> None:
@@ -50,8 +52,55 @@ def _env(key: str, default: str = "") -> str:
     return os.environ.get(key, default).strip()
 
 
-def _GEMINI_API_KEY() -> str:  # type: ignore[assignment]
-    return _env("GEMINI_API_KEY")
+def _split_keys(raw: str) -> list[str]:
+    import re
+    parts = re.split(r"[\r\n,;]+", raw)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def set_runtime_gemini_keys(keys: list[str] | str) -> None:
+    """Override or set Gemini API keys dynamically at runtime."""
+    global _RUNTIME_GEMINI_KEYS, _CURRENT_GEMINI_KEY_INDEX
+    if isinstance(keys, str):
+        keys = _split_keys(keys)
+    _RUNTIME_GEMINI_KEYS = [k.strip() for k in keys if k and k.strip()]
+    _CURRENT_GEMINI_KEY_INDEX = 0
+
+
+def _get_gemini_api_keys() -> list[str]:
+    """Return all configured Gemini API keys (from runtime, GEMINI_API_KEYS, or GEMINI_API_KEY)."""
+    if _RUNTIME_GEMINI_KEYS is not None and len(_RUNTIME_GEMINI_KEYS) > 0:
+        return _RUNTIME_GEMINI_KEYS
+    raw = _env("GEMINI_API_KEYS") or _env("GEMINI_API_KEY")
+    return _split_keys(raw)
+
+
+def _GEMINI_API_KEY() -> str:
+    keys = _get_gemini_api_keys()
+    if not keys:
+        return ""
+    global _CURRENT_GEMINI_KEY_INDEX
+    return keys[_CURRENT_GEMINI_KEY_INDEX % len(keys)]
+
+
+def get_gemini_keys_info() -> dict[str, Any]:
+    """Return status summary of configured Gemini keys."""
+    keys = _get_gemini_api_keys()
+    if not keys:
+        return {"total": 0, "active_index": 0, "active_label": "None", "keys_summary": []}
+    global _CURRENT_GEMINI_KEY_INDEX
+    active_idx = _CURRENT_GEMINI_KEY_INDEX % len(keys)
+    masked = []
+    for i, k in enumerate(keys):
+        k_clean = k.strip()
+        m = f"{k_clean[:6]}...{k_clean[-4:]}" if len(k_clean) > 10 else f"Key {i+1}"
+        masked.append(f"Account {i+1}: {m}")
+    return {
+        "total": len(keys),
+        "active_index": active_idx,
+        "active_label": f"Key {active_idx + 1} of {len(keys)}",
+        "keys_summary": masked,
+    }
 
 
 # Model defaults — configurable via .env
@@ -87,8 +136,8 @@ _CACHE_DIR.mkdir(exist_ok=True)
 _MEM_CACHE: dict[str, Any] = {}
 
 
-def _cache_key(task: str, prompt: str, provider: str, model: str) -> str:
-    raw = json.dumps({"task": task, "prompt": prompt, "provider": provider, "model": model},
+def _cache_key(task: str, prompt: str, provider: str, model: str, language: str = "cpp") -> str:
+    raw = json.dumps({"task": task, "prompt": prompt, "provider": provider, "model": model, "language": language},
                      sort_keys=True)
     return hashlib.sha256(raw.encode()).hexdigest()
 
@@ -155,16 +204,16 @@ _SUGGESTION_SCHEMA = {
     "required": ["analysis", "suggestions"],
 }
 
-# ── Gemini provider (google-genai SDK) ───────────────────────────────────────
+# ── Gemini provider (disabled - local Ollama only mode) ───────────────────────
 def _gemini_available() -> bool:
-    return bool(_GEMINI_API_KEY())
+    return False
 
 
 def _sanitize_gemini_error(exc: Exception) -> str:
     raw_msg = str(exc)
-    key = _GEMINI_API_KEY()
-    if key and key in raw_msg:
-        raw_msg = raw_msg.replace(key, "[KEY]")
+    for key in _get_gemini_api_keys():
+        if key and len(key) > 5 and key in raw_msg:
+            raw_msg = raw_msg.replace(key, "[KEY_REDACTED]")
     return raw_msg.strip()
 
 
@@ -183,10 +232,10 @@ def _call_gemini(
     schema: dict | None = None,
     progress_callback: Callable[[dict], None] | None = None,
 ) -> str:
-    """Call Gemini via google-genai SDK. Returns raw text (JSON string when schema set)."""
-    api_key = _GEMINI_API_KEY()
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is not set in .env")
+    """Call Gemini via google-genai SDK with multi-account rotation and rate-limit failover."""
+    keys = _get_gemini_api_keys()
+    if not keys:
+        raise RuntimeError("GEMINI_API_KEY is not set in .env or settings")
 
     gemini_model = model or _env("GEMINI_MODEL", _DEFAULT_GEMINI_MODEL)
     try:
@@ -195,9 +244,7 @@ def _call_gemini(
     except ImportError as exc:
         raise RuntimeError("google-genai not installed") from exc
 
-    client = genai.Client(api_key=api_key)
     max_tok = _GEMINI_MAX_TOKENS.get(task, _GEMINI_MAX_TOKENS["default"])
-
     gen_config_kwargs: dict[str, Any] = {
         "temperature": 0.0,
         "max_output_tokens": max_tok,
@@ -207,52 +254,99 @@ def _call_gemini(
         gen_config_kwargs["response_mime_type"] = "application/json"
         gen_config_kwargs["response_schema"] = schema
 
-    _report(progress_callback, {"stage": "requesting"})
-    t0 = time.monotonic()
+    global _CURRENT_GEMINI_KEY_INDEX
+    total_keys = len(keys)
+    start_index = _CURRENT_GEMINI_KEY_INDEX % total_keys
 
-    result_holder: dict[str, Any] = {}
-    exc_holder: dict[str, Exception] = {}
+    last_exc: Exception | None = None
 
-    def _do_generate():
-        for attempt in range(2):
-            try:
-                resp = client.models.generate_content(
-                    model=gemini_model,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(**gen_config_kwargs),
-                )
-                result_holder["text"] = resp.text or ""
-                exc_holder.clear()
-                return
-            except Exception as exc:
-                exc_holder["exc"] = exc
-                err_str = str(exc)
-                if ("503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str) and attempt == 0:
-                    time.sleep(1.5)
-                    continue
-                break
+    for attempt in range(total_keys):
+        current_idx = (start_index + attempt) % total_keys
+        api_key = keys[current_idx]
+        key_num = current_idx + 1
 
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        fut = pool.submit(_do_generate)
-        fut.result(timeout=_GEMINI_TIMEOUT)
+        client = genai.Client(api_key=api_key)
+        _report(progress_callback, {
+            "stage": "requesting",
+            "message": f"Calling Gemini ({gemini_model}) [Account Key {key_num}/{total_keys}]...",
+        })
+        t0 = time.monotonic()
 
-    if exc_holder:
-        raise exc_holder["exc"]
+        result_holder: dict[str, Any] = {}
+        exc_holder: dict[str, Exception] = {}
 
-    text = result_holder.get("text", "")
-    elapsed = time.monotonic() - t0
-    char_count = len(text)
-    _report(progress_callback, {
-        "stage": "generating",
-        "characters": char_count,
-        "text": text,
-    })
-    _report(progress_callback, {
-        "stage": "done",
-        "characters": char_count,
-        "elapsed": elapsed,
-    })
-    return text
+        def _do_generate():
+            for retry in range(2):
+                try:
+                    resp = client.models.generate_content(
+                        model=gemini_model,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(**gen_config_kwargs),
+                    )
+                    result_holder["text"] = resp.text or ""
+                    exc_holder.clear()
+                    return
+                except Exception as exc:
+                    exc_holder["exc"] = exc
+                    err_str = str(exc).lower()
+                    if ("503" in err_str or "unavailable" in err_str or "high demand" in err_str) and retry == 0:
+                        time.sleep(1.5)
+                        continue
+                    break
+
+        try:
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                fut = pool.submit(_do_generate)
+                fut.result(timeout=_GEMINI_TIMEOUT)
+        except Exception as pool_exc:
+            exc_holder["exc"] = pool_exc
+
+        if not exc_holder:
+            # Success! Keep current key index pointing to this working key
+            _CURRENT_GEMINI_KEY_INDEX = current_idx
+            text = result_holder.get("text", "")
+            elapsed = time.monotonic() - t0
+            char_count = len(text)
+            _report(progress_callback, {
+                "stage": "generating",
+                "characters": char_count,
+                "text": text,
+            })
+            _report(progress_callback, {
+                "stage": "done",
+                "characters": char_count,
+                "elapsed": elapsed,
+            })
+            return text
+
+        # An exception occurred with this key
+        exc = exc_holder["exc"]
+        last_exc = exc
+        err_msg = str(exc).lower()
+
+        if "api_key_invalid" in err_msg or "api key not valid" in err_msg or "invalid_argument" in err_msg:
+            _INVALID_GEMINI_KEYS.add(api_key)
+
+        # If more keys are available, rotate to next account key
+        if attempt < total_keys - 1:
+            next_idx = (start_index + attempt + 1) % total_keys
+            logger.warning(
+                "Gemini key #%d hit error (%s). Rotating to key #%d of %d.",
+                key_num, _sanitize_gemini_error(exc), next_idx + 1, total_keys
+            )
+            _report(progress_callback, {
+                "stage": "key_rotation",
+                "message": f"Gemini key #{key_num} limit reached. Auto-switching to account key #{next_idx + 1}/{total_keys}…",
+            })
+            _CURRENT_GEMINI_KEY_INDEX = next_idx
+            continue
+        else:
+            logger.error("All %d Gemini API key(s) failed. Last error: %s", total_keys, _sanitize_gemini_error(exc))
+            break
+
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Gemini call failed with all configured keys.")
 
 
 # ── Ollama helpers ───────────────────────────────────────────────────────────
@@ -333,16 +427,26 @@ def _call_ollama(
     if json_mode:
         payload["format"] = "json"
 
+    task_timeouts = {
+        "live_suggestions": 3,
+        "chat": 45,
+        "security_audit": 30,
+        "efficiency_profile": 30,
+        "test_generation": 30,
+        "optimal_code": 60,
+    }
+    effective_timeout = task_timeouts.get(task, 30)
+
     _report(progress_callback, {"stage": "requesting"})
     try:
         response = requests.post(
             f"{ollama_url}/api/generate",
             json=payload,
-            timeout=(3, _OLLAMA_TIMEOUT),
+            timeout=(3, effective_timeout),
             stream=stream,
         )
     except requests.exceptions.Timeout:
-        raise RuntimeError(f"Ollama timed out after {_OLLAMA_TIMEOUT}s")
+        raise RuntimeError(f"Ollama timed out after {effective_timeout}s")
     except requests.exceptions.ConnectionError:
         raise RuntimeError(f"Ollama is not running at {ollama_url}")
 
@@ -400,6 +504,7 @@ def generate_task(
     gemini_model: str | None = None,
     ollama_model: str | None = None,
     max_tokens: int | None = None,
+    language: str = "cpp",
     progress_callback: Callable[[dict], None] | None = None,
 ) -> tuple[Any, str, str]:
     """Generate a response for *task* using Gemini (primary) or Ollama (fallback).
@@ -435,57 +540,14 @@ def generate_task(
     else:
         eff_ollama_model = default_ollama
 
-    # ── Determine provider strategy ───────────────────────────────────────
-    forced = (provider_name or "").lower().strip()
-    has_gemini_key = _gemini_available()
-
-    # Gemini is tried first unless Ollama is forced
-    try_gemini_first = (forced != "ollama")
-
-    gemini_error: str = ""
-
-    # ── Try Gemini ────────────────────────────────────────────────────────
-    if try_gemini_first:
-        if not has_gemini_key:
-            gemini_error = "GEMINI_API_KEY is not set in .env"
-            logger.info("Gemini skipped (%s); proceeding to Ollama", gemini_error)
-            _report(progress_callback, {
-                "stage": "fallback",
-                "message": f"Gemini ({eff_gemini_model}): {gemini_error}. Trying local Ollama ({eff_ollama_model})…",
-            })
-        else:
-            ck = _cache_key(task, prompt, "gemini", eff_gemini_model)
-            cached = _cache_get(ck)
-            if cached is not None:
-                _report(progress_callback, {"stage": "cached"})
-                return cached, "gemini", eff_gemini_model
-
-            use_schema = schema
-            if task == "live_suggestions" and use_schema is None:
-                use_schema = _SUGGESTION_SCHEMA
-            try:
-                raw = _call_gemini(task, prompt, model=eff_gemini_model, schema=use_schema,
-                                   progress_callback=progress_callback)
-                result = _try_parse_json(raw)
-                _cache_put(ck, result)
-                return result, "gemini", eff_gemini_model
-            except Exception as exc:
-                gemini_error = _sanitize_gemini_error(exc)
-                logger.warning("Gemini (%s) failed (%s); falling back to Ollama (%s)",
-                               eff_gemini_model, gemini_error, eff_ollama_model)
-                _report(progress_callback, {
-                    "stage": "fallback",
-                    "message": f"Gemini ({eff_gemini_model}) failed: {gemini_error}. Trying local Ollama ({eff_ollama_model})…",
-                })
-
-    # ── Ollama fallback ───────────────────────────────────────────────────
-    ck2 = _cache_key(task, prompt, "ollama", eff_ollama_model)
+    # ── Local Ollama Direct Route (No API Key Required) ─────────────────────
+    ck2 = _cache_key(task, prompt, "ollama", eff_ollama_model, language=language)
     cached2 = _cache_get(ck2)
     if cached2 is not None:
         _report(progress_callback, {"stage": "cached"})
         return cached2, "ollama", eff_ollama_model
 
-    json_mode = task in ("live_suggestions",)
+    json_mode = task in ("live_suggestions", "security_audit", "efficiency_profile", "test_generation")
     try:
         raw = _call_ollama(task, prompt, model=eff_ollama_model,
                            json_mode=json_mode,
@@ -495,30 +557,18 @@ def generate_task(
         return result, "ollama", eff_ollama_model
     except Exception as exc:
         ollama_error = str(exc)
-        # Surface real Gemini reason first, then the Ollama fallback result
-        if gemini_error:
-            combined = (
-                f"Gemini ({eff_gemini_model}) failed: {gemini_error}. "
-                f"Fallback Ollama ({eff_ollama_model}) failed: {ollama_error}"
-            )
-        else:
-            combined = f"Ollama ({eff_ollama_model}) failed: {ollama_error}"
+        combined = f"Local Ollama ({eff_ollama_model}) error: {ollama_error}"
         _report(progress_callback, {"stage": "error", "message": combined})
         raise RuntimeError(combined) from exc
 
 
 def active_provider_label(provider_name: str | None = None, model: str | None = None) -> str:
-    """Return the UI label string, e.g. 'gemini • gemini-3.1-flash-lite'."""
-    forced = (provider_name or "").lower().strip()
+    """Return UI label string for local Ollama."""
     live_model = _env("LIVE_MODEL", "qwen2.5-coder:3b")
-    gemini_model = _env("GEMINI_MODEL", _DEFAULT_GEMINI_MODEL)
-    if forced == "ollama" or not _gemini_available():
-        use_model = model or live_model
-        if use_model.startswith("gemini"):
-            use_model = live_model
-        return f"ollama • {use_model}"
-    use_gem = model if (model and model.startswith("gemini")) else gemini_model
-    return f"gemini • {use_gem}"
+    use_model = model or live_model
+    if use_model.startswith("gemini"):
+        use_model = live_model
+    return f"ollama • {use_model}"
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

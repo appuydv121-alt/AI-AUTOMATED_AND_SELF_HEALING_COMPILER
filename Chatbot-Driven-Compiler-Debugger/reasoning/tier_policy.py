@@ -54,7 +54,7 @@ def compute_tier_ceiling(candidate: Candidate, bundle: FactBundle) -> Tier:
         for fact in bundle.facts:
             if fact.id != fid:
                 continue
-            if fact.source == "compiler":
+            if fact.source in ("compiler", "authoritative_frontend"):
                 if fact.kind == "error":
                     has_compiler_error = True
                 elif fact.kind == "warning":

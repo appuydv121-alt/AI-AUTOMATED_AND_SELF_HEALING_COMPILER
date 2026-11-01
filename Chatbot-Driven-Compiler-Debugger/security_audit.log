@@ -1,0 +1,28 @@
+[2026-10-31 12:57:05] [THREAT_INTERCEPTED] Action: Compile Blocked (Pre-Execution Gate)
+Triggered Rule: CRITICAL: Socket communication function detected. Network connections are prohibited.
+Code Excerpt:
+
+import sqlite3
+import time
+import random
+
+# 1. Database connection
+conn = sqlite3.connect("students.db")
+cursor = conn.cursor()
+
+# 2. Create student table
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS students (
+    id INTEGER PRIMARY KEY,
+    name TEXT,
+    age INTEGER,
+    marks INTEGER
+)
+""")
+
+# 3. Student data
+students = [
+    ("Rahul", 20, 85),
+    ("Aman", 19, 90),
+  
+======================================================================

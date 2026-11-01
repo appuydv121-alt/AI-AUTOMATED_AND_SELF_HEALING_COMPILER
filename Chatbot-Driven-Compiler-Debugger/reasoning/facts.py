@@ -24,31 +24,52 @@ def collect(
     *,
     compile_result: Optional[dict[str, Any]] = None,
     work_dir: str | None = None,
+    language: str = "cpp",
 ) -> FactBundle:
     """Build a complete ``FactBundle`` from source code.
 
     Parameters
     ----------
     source : str
-        The C++ source code.
+        The source code.
     compile_result : dict, optional
         Result from ``compile_and_run``, with keys ``return_code``,
         ``stdout``, ``stderr``.
     work_dir : str, optional
         Working directory for temp files.
+    language : str, optional
+        Language of the source code (e.g. "cpp", "python", "javascript", "sql").
     """
     if work_dir is None:
         work_dir = os.path.dirname(os.path.abspath(__file__))
 
     source_lines = source.splitlines()
     facts: list[Fact] = []
+    is_cpp = language.lower() in ("cpp", "c", "c++")
 
-    # ── 0b: Compiler warnings with notes ──────────────────────────────
-    compiler_facts = collect_compiler_facts(source, work_dir=work_dir)
-    facts.extend(compiler_facts)
+    # ── 0b: Compiler warnings with notes (only for C/C++) ──────────────
+    if is_cpp:
+        compiler_facts = collect_compiler_facts(source, work_dir=work_dir)
+        facts.extend(compiler_facts)
+
+    # Ingest compile_result errors/warnings if provided from an actual compilation failure
+    if compile_result and compile_result.get("stderr") and is_cpp:
+        from reasoning.compiler_facts import _parse_text_diagnostics
+        cr_facts = _parse_text_diagnostics(compile_result["stderr"], "")
+        existing_msgs = {f.message for f in facts}
+        fact_idx = len(facts)
+        for cf in cr_facts:
+            if cf.message not in existing_msgs:
+                fact_idx += 1
+                cf.id = f"F{fact_idx}"
+                facts.append(cf)
+                existing_msgs.add(cf.message)
 
     # ── 0c: Syntax tree ───────────────────────────────────────────────
-    ast_info = parse_source(source)
+    if is_cpp:
+        ast_info = parse_source(source)
+    else:
+        ast_info = {"functions": [], "scopes": [], "declarations": [], "usages": [], "frontend_used": language}
     frontend_used = ast_info.get("frontend_used", "none")
 
     # Convert AST declarations to facts

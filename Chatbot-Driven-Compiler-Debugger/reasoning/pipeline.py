@@ -67,6 +67,7 @@ def _pipeline_cache_key(
     provider_name: str,
     gemini_model: str | None,
     ollama_model: str | None,
+    language: str = "cpp",
 ) -> str:
     payload = json.dumps(
         {
@@ -76,6 +77,7 @@ def _pipeline_cache_key(
             "provider": provider_name,
             "gemini_model": gemini_model or "",
             "ollama_model": ollama_model or "",
+            "language": language,
         },
         sort_keys=True,
     )
@@ -91,15 +93,16 @@ def run_reasoning(
     provider_name: str = "",
     gemini_model: str | None = None,
     ollama_model: str | None = None,
+    language: str = "cpp",
 ) -> ReasoningResult:
     """Run the full Fact → Hypothesis → Verification pipeline.
 
     Parameters
     ----------
     source : str
-        The C++ source code.
+        The source code.
     run_result : dict, optional
-        Result from ``compile_and_run`` with keys ``return_code``,
+        Result from compilation/execution with keys ``return_code``,
         ``stdout``, ``stderr``.
     profile : str
         One of ``"quick"``, ``"standard"``, ``"thorough"``.
@@ -115,6 +118,8 @@ def run_reasoning(
         Gemini model name selected in the sidebar.
     ollama_model : str, optional
         Ollama model name selected in the sidebar.
+    language : str, optional
+        Source language (e.g., "cpp", "python", "typescript").
 
     Returns
     -------
@@ -138,6 +143,7 @@ def run_reasoning(
         source, run_result, profile,
         provider_name or "gemini",
         gemini_model, ollama_model,
+        language=language,
     )
     if cache_key in _PIPELINE_CACHE:
         return _PIPELINE_CACHE[cache_key]
@@ -153,7 +159,7 @@ def run_reasoning(
 
     # ── Stage 0: Collect facts (always runs, deterministic) ─────────
     try:
-        bundle = collect_facts(source, compile_result=run_result, work_dir=work_dir)
+        bundle = collect_facts(source, compile_result=run_result, work_dir=work_dir, language=language)
         result.fact_bundle = bundle
         stages_run.append("facts")
     except Exception:

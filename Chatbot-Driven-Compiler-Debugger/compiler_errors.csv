@@ -1339,3 +1339,12 @@ C:\TOACD_PROJECT_FINAL\TOACD_PROJECT\TOACD_PROJECT\Chatbot-Driven-Compiler-Debug
       |               |
       |               const char*
 ",N/A
+2026-10-25 12:17:59,"C:\TOACD_PROJECT_FINAL\TOACD_PROJECT\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp: In function 'int main()':
+C:\TOACD_PROJECT_FINAL\TOACD_PROJECT\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:5:18: error: conversion from 'int' to non-scalar type 'std::string' {aka 'std::__cxx11::basic_string<char>'} requested
+    5 |     string age = 20;
+      |                  ^~
+",Unknown,"C:\TOACD_PROJECT_FINAL\TOACD_PROJECT\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp: In function 'int main()':
+C:\TOACD_PROJECT_FINAL\TOACD_PROJECT\TOACD_PROJECT\Chatbot-Driven-Compiler-Debugger\temp_source.cpp:5:18: error: conversion from 'int' to non-scalar type 'std::string' {aka 'std::__cxx11::basic_string<char>'} requested
+    5 |     string age = 20;
+      |                  ^~
+",N/A

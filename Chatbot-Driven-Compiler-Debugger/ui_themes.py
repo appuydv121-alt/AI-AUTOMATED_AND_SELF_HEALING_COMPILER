@@ -76,24 +76,268 @@ header[data-testid="stHeader"] { display: none !important; }
     color: var(--text) !important;
     font-family: 'Manrope', system-ui, sans-serif;
 }
-[data-testid="stSidebar"] [data-baseweb="select"] > div,
-[data-testid="stSidebar"] input,
-[data-testid="stSidebar"] textarea {
+/* ---------- Form Inputs & Textareas (Global & Stdin Tab) ---------- */
+[data-baseweb="select"] > div,
+input,
+.stTextInput input,
+[data-baseweb="base-input"] {
     background: var(--surface2) !important;
+    background-color: var(--surface2) !important;
     color: var(--text) !important;
+    border: 1px solid var(--border) !important;
     border-color: var(--border) !important;
     border-radius: 8px !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 0.9rem !important;
+    caret-color: var(--accent) !important;
+}
+
+/* Stdin Text Area - high-contrast black text on white background */
+.ui-stdin-wrapper [data-testid="stTextArea"] textarea,
+.ui-stdin-wrapper textarea,
+[data-testid="stTextArea"] textarea,
+div[data-baseweb="textarea"] textarea {
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    -webkit-text-fill-color: #000000 !important;
+    caret-color: #000000 !important;
+    font-family: 'JetBrains Mono', Consolas, monospace !important;
+    font-size: 0.92rem !important;
+    font-weight: 600 !important;
+    border: 1.5px solid #cbd5e1 !important;
+    border-radius: 8px !important;
+}
+
+.ui-stdin-wrapper textarea::placeholder,
+[data-testid="stTextArea"] textarea::placeholder,
+div[data-baseweb="textarea"] textarea::placeholder {
+    color: #64748b !important;
+    -webkit-text-fill-color: #64748b !important;
+    font-weight: 400 !important;
+    opacity: 0.85 !important;
+}
+
+.ui-stdin-wrapper textarea:focus,
+[data-testid="stTextArea"] textarea:focus,
+div[data-baseweb="textarea"] textarea:focus {
+    border-color: #3ddc97 !important;
+    box-shadow: 0 0 0 2px rgba(61, 220, 151, 0.3) !important;
+    outline: none !important;
 }
 [data-testid="stSidebar"] .stCheckbox > label { color: var(--text) !important; }
 [data-testid="stSidebar"] [data-baseweb="slider"] > div > div { background: var(--accent) !important; }
-[data-testid="stSidebar"] [data-testid="stExpander"] details {
+
+/* ---------- Global Expanders (Main Page & Sidebar) ---------- */
+[data-testid="stExpander"],
+div[data-testid="stExpander"],
+[data-testid="stExpander"] details {
     background: var(--surface2) !important;
+    background-color: var(--surface2) !important;
     border: 1px solid var(--border) !important;
-    border-radius: 10px !important;
+    border-radius: 12px !important;
+    overflow: hidden !important;
 }
-[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+[data-testid="stExpander"] summary {
     color: var(--text) !important;
     font-weight: 600 !important;
+    background: var(--surface2) !important;
+    background-color: var(--surface2) !important;
+    border-radius: 12px !important;
+    padding: 0.5rem 0.85rem !important;
+    transition: background-color 140ms ease-out !important;
+}
+[data-testid="stExpander"] summary:hover {
+    background: var(--surface) !important;
+    color: var(--accent) !important;
+}
+[data-testid="stExpander"] [data-testid="stExpanderDetails"] {
+    background: var(--surface2) !important;
+    background-color: var(--surface2) !important;
+    border-top: 1px solid var(--border) !important;
+    padding: 0.85rem 1rem !important;
+}
+
+/* ---------- Global Alerts & Banners (st.info, st.warning, st.error) ---------- */
+div[data-testid="stAlert"] {
+    background: var(--surface) !important;
+    background-color: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 8px !important;
+    color: var(--text) !important;
+}
+div[data-testid="stAlert"] p,
+div[data-testid="stAlert"] span,
+div[data-testid="stAlert"] div {
+    color: var(--text) !important;
+}
+
+/* ---------- Rating Breakdown Deduction Cards ---------- */
+.ui-deduction-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.85rem 1.1rem;
+    margin-bottom: 0.75rem;
+    transition: border-color 150ms ease;
+}
+.ui-deduction-card:hover {
+    border-color: var(--accent);
+}
+.ui-deduction-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+.ui-deduction-title {
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+}
+.ui-deduction-badge {
+    font-size: 0.76rem;
+    font-weight: 700;
+    padding: 0.2rem 0.65rem;
+    border-radius: 9999px;
+    letter-spacing: 0.02em;
+}
+.ui-deduction-badge.efficiency {
+    background: rgba(245, 184, 75, 0.15);
+    color: #F5B84B;
+    border: 1px solid rgba(245, 184, 75, 0.35);
+}
+.ui-deduction-badge.security-warn {
+    background: rgba(245, 184, 75, 0.15);
+    color: #F5B84B;
+    border: 1px solid rgba(245, 184, 75, 0.35);
+}
+.ui-deduction-badge.security-crit {
+    background: rgba(255, 107, 107, 0.15);
+    color: #FF6B6B;
+    border: 1px solid rgba(255, 107, 107, 0.35);
+}
+.ui-deduction-why {
+    font-size: 0.86rem;
+    color: var(--muted);
+    line-height: 1.5;
+    margin-bottom: 0.45rem;
+}
+.ui-deduction-why strong {
+    color: var(--text);
+}
+.ui-deduction-fix {
+    font-size: 0.86rem;
+    color: var(--text);
+    line-height: 1.5;
+    margin-bottom: 0.4rem;
+}
+.ui-deduction-fix strong {
+    color: var(--accent);
+}
+.ui-deduction-code {
+    background: var(--code_bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.82rem;
+    color: var(--accent);
+    margin-top: 0.35rem;
+    white-space: pre-wrap;
+    overflow-x: auto;
+}
+
+/* ---------- Agentic AI Execution Trace & Deliberation Cards ---------- */
+.ui-agent-trace-container {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    margin-top: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+.ui-agent-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-left: 3.5px solid var(--accent);
+    border-radius: 8px;
+    padding: 0.7rem 0.95rem;
+    transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.ui-agent-card.planner {
+    border-left-color: #38bdf8;
+}
+.ui-agent-card.optimizer {
+    border-left-color: #a855f7;
+}
+.ui-agent-card.judge-success {
+    border-left-color: #10b981;
+}
+.ui-agent-card.judge-warn {
+    border-left-color: #f59e0b;
+}
+.ui-agent-card.critic {
+    border-left-color: #ef4444;
+}
+.ui-agent-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.35rem;
+}
+.ui-agent-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.2rem 0.55rem;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.05);
+}
+.ui-agent-tag.planner { color: #38bdf8; background: rgba(56, 189, 248, 0.12); }
+.ui-agent-tag.optimizer { color: #c084fc; background: rgba(192, 132, 252, 0.12); }
+.ui-agent-tag.judge { color: #34d399; background: rgba(52, 211, 153, 0.12); }
+.ui-agent-tag.critic { color: #f87171; background: rgba(248, 113, 113, 0.12); }
+.ui-agent-action {
+    font-weight: 600;
+    font-size: 0.88rem;
+    color: var(--text);
+    margin-left: 0.4rem;
+}
+.ui-agent-time {
+    font-size: 0.76rem;
+    color: var(--muted);
+    font-family: 'JetBrains Mono', monospace;
+}
+.ui-agent-details {
+    font-size: 0.82rem;
+    color: var(--text);
+    opacity: 0.9;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    background: rgba(0, 0, 0, 0.15);
+    padding: 0.45rem 0.65rem;
+    border-radius: 6px;
+    margin-top: 0.35rem;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+}
+.ui-agent-metric-delta {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.65rem;
+    border-radius: 8px;
+    background: rgba(61, 220, 151, 0.1);
+    border: 1px solid rgba(61, 220, 151, 0.3);
+    color: #3ddc97;
+    font-weight: 700;
+    font-size: 0.85rem;
 }
 [data-testid="collapsedControl"] {
     color: var(--muted) !important;
@@ -270,8 +514,8 @@ button[data-testid="stBaseButton-secondary"][key="pill_tests"],
 [data-testid="stChatMessage"] p {
     color: var(--text) !important;
     font-size: 0.92rem !important;
-    line-height: 1.5 !important;
-    margin: 0 !important;
+    line-height: 1.6 !important;
+    margin: 0.3rem 0 !important;
 }
 [data-testid="stChatMessage"] ol {
     padding-left: 1.25rem !important;
@@ -285,6 +529,131 @@ button[data-testid="stBaseButton-secondary"][key="pill_tests"],
 [data-testid="stChatMessage"] ol li::marker {
     color: var(--accent) !important;
     font-weight: 700 !important;
+}
+[data-testid="stChatMessage"] ul {
+    padding-left: 1.25rem !important;
+    margin: 0.35rem 0 !important;
+}
+[data-testid="stChatMessage"] ul li {
+    color: var(--text) !important;
+    margin-bottom: 0.3rem !important;
+    font-size: 0.92rem !important;
+}
+[data-testid="stChatMessage"] ul li::marker {
+    color: var(--accent) !important;
+}
+
+/* Headings inside chat responses */
+[data-testid="stChatMessage"] h1,
+[data-testid="stChatMessage"] h2,
+[data-testid="stChatMessage"] h3,
+[data-testid="stChatMessage"] h4 {
+    color: var(--text) !important;
+    font-weight: 700 !important;
+    margin-top: 0.75rem !important;
+    margin-bottom: 0.35rem !important;
+    letter-spacing: -0.01em;
+}
+[data-testid="stChatMessage"] h2 {
+    font-size: 1.12rem !important;
+    color: var(--accent) !important;
+}
+[data-testid="stChatMessage"] h3 {
+    font-size: 1.02rem !important;
+}
+/* Hide anchor link chain icons in chat headers */
+[data-testid="stChatMessage"] a[href^="#"],
+[data-testid="stChatMessage"] .header-anchor,
+[data-testid="stChatMessage"] a:has(svg),
+[data-testid="stChatMessage"] h1 a,
+[data-testid="stChatMessage"] h2 a,
+[data-testid="stChatMessage"] h3 a,
+[data-testid="stChatMessage"] h4 a {
+    display: none !important;
+}
+
+/* Inline Code (e.g. `sum`, `0`, `int`) */
+.stApp code:not(pre code),
+[data-testid="stMarkdownContainer"] code:not(pre code),
+[data-testid="stChatMessage"] code:not(pre code),
+[data-testid="stChatMessage"] p code,
+[data-testid="stChatMessage"] li code {
+    background: var(--code_bg) !important;
+    color: var(--accent) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 6px !important;
+    padding: 0.15rem 0.45rem !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 0.88em !important;
+    font-weight: 500 !important;
+    box-shadow: none !important;
+}
+
+/* LaTeX Math / KaTeX equations & symbols */
+.katex,
+.katex-html,
+.katex-display,
+[data-testid="stChatMessage"] .katex {
+    color: var(--text) !important;
+    background: transparent !important;
+    font-size: 1.02em !important;
+}
+.katex .base {
+    color: var(--text) !important;
+}
+.katex .mord,
+.katex .mbin,
+.katex .mrel,
+.katex .mpunct,
+.katex .minner {
+    color: var(--text) !important;
+}
+.katex .mord.mathnormal {
+    color: var(--accent) !important;
+}
+.katex-display {
+    padding: 0.4rem 0 !important;
+    margin: 0.4rem 0 !important;
+    overflow-x: auto;
+}
+
+/* Code Blocks in Chat & Markdown */
+[data-testid="stCode"],
+.stCodeBlock,
+[data-testid="stChatMessage"] pre,
+[data-testid="stChatMessage"] [data-testid="stCode"],
+[data-testid="stMarkdownContainer"] pre {
+    background: var(--code_bg) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 12px !important;
+    box-shadow: none !important;
+    margin: 0.75rem 0 !important;
+}
+
+[data-testid="stCode"] pre,
+.stCodeBlock pre,
+[data-testid="stChatMessage"] pre code,
+[data-testid="stMarkdownContainer"] pre code {
+    background: var(--code_bg) !important;
+    color: var(--text) !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 0.88rem !important;
+    line-height: 1.6 !important;
+    border: none !important;
+    padding: 0.85rem 1rem !important;
+}
+
+[data-testid="stCode"] button,
+.stCodeBlock button {
+    background: var(--surface2) !important;
+    color: var(--muted) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 6px !important;
+}
+[data-testid="stCode"] button:hover,
+.stCodeBlock button:hover {
+    color: var(--text) !important;
+    border-color: var(--accent) !important;
 }
 
 /* Sticky Chat Input */
@@ -584,7 +953,7 @@ def setup_ui(model_name: str | None = None, provider: str | None = None) -> dict
     with title:
         prov_chip = f'<span class="app-chip">{provider.capitalize()}</span>' if provider else ''
         st.markdown(
-            f'<div class="app-bar"><span class="app-title">C++ Compiler &amp; Debugger</span>'
+            f'<div class="app-bar"><span class="app-title">Chatbot Compiler Debugger</span>'
             f'<span class="app-chip live"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-right:6px;vertical-align:middle;"></span>{model_name}</span>'
             f'{prov_chip}'
             f'<span class="app-chip">🛡️ Sandboxed run</span></div>',

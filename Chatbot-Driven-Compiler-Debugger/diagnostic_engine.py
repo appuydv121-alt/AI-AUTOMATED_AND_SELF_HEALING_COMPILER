@@ -532,6 +532,150 @@ def check_variable_shadowing(code):
     return diagnostics
 
 
+def check_cin_string_whitespace(code: str) -> list[dict]:
+    """Detect if cin >> is used on a string variable which might unexpectedly truncate multi-word inputs."""
+    if not code or 'cin' not in code or 'string' not in code:
+        return []
+    diags = []
+    str_vars = set(re.findall(r'\b(?:std::)?string\s+([a-zA-Z_]\w*)', code))
+    if not str_vars:
+        return []
+
+    for var in str_vars:
+        m = re.search(rf'\bcin\s*>>\s*{var}\b', code)
+        if m:
+            line_no = code[:m.start()].count('\n') + 1
+            diags.append(make_diagnostic(
+                category='SUGGESTION',
+                title=f"Single-word input with 'cin >> {var}'",
+                message=f"'cin >> {var}' stops reading at the first space. If multi-word input (such as full names with spaces) is expected, use 'getline(cin, {var});'.",
+                line=line_no,
+                why="By C++ stream rules, operator>> treats spaces as delimiters and leaves subsequent words in the input buffer.",
+                fix=f"getline(cin, {var});"
+            ))
+    return diags
+
+
+def check_uninitialized_variables(code: str) -> list[dict]:
+    """Detect local primitive variables that are read or accumulated on before being initialized."""
+    from cpp_declarations import extract_declarations
+    decls = extract_declarations(code)
+    PRIMITIVE_TYPES = {'int', 'long', 'short', 'float', 'double', 'char', 'bool', 'size_t', 'unsigned', 'signed'}
+
+    issues = []
+    lines = code.splitlines()
+
+    for d in decls:
+        # Only local stack variables need initialization checks (ignore function parameters, class members, globals)
+        if getattr(d, 'scope', 'local') != 'local':
+            continue
+        type_base = d.type_text.split()[-1] if d.type_text else ''
+        if (d.type_family in ('INTEGER', 'FLOAT', 'BOOL', 'CHAR', 'POINTER') or type_base in PRIMITIVE_TYPES) and d.init_kind == 'NONE' and not d.is_array:
+            rest_code = code[d.stmt_span[1]:]
+
+            pattern = rf'\b{d.name}\b'
+            m = re.search(pattern, rest_code)
+            if not m:
+                continue
+
+            first_pos = d.stmt_span[1] + m.start()
+            line_no = code[:first_pos].count('\n') + 1
+            if line_no > len(lines):
+                continue
+            line_text = lines[line_no - 1]
+
+            idx = line_text.find(d.name)
+            if idx == -1:
+                continue
+            suffix_line = line_text[idx + len(d.name):].lstrip()
+
+            # 1. Stdin assignment target: cin >> name
+            if "cin" in line_text and (">> " + d.name in line_text or ">>" + d.name in line_text):
+                continue
+            # 2. scanf target: &name
+            if re.search(rf'&\s*{d.name}\b', line_text):
+                continue
+            # 3. Pure assignment: name = ... (NOT ==, +=, -=, *=, /=)
+            if suffix_line.startswith('=') and not suffix_line.startswith(('==', '=>')):
+                continue
+
+            default_val = '0'
+            if d.type_family == 'FLOAT': default_val = '0.0'
+            elif d.type_family == 'BOOL': default_val = 'false'
+            elif d.type_family == 'POINTER': default_val = 'nullptr'
+
+            issues.append(make_diagnostic(
+                category="BUG",
+                title=f"Uninitialized variable '{d.name}'",
+                message=f"Variable '{d.name}' is read or accumulated onto without being initialized. In C++, local primitive variables hold undefined garbage values until initialized.",
+                line=line_no,
+                why="Stack variables in C++ are not zero-initialized by default. Reading an uninitialized variable yields unpredictable results.",
+                fix=f"{d.type_text} {d.name} = {default_val};"
+            ))
+
+    return issues
+
+
+def check_division_by_zero(code: str) -> list[dict]:
+    """Flag division or modulo by literal zero."""
+    issues = []
+    for m in re.finditer(r'(?:/|%)\s*0\b(?!\.)', code):
+        line_no = code[:m.start()].count('\n') + 1
+        issues.append(make_diagnostic(
+            category="BUG",
+            title="Division by zero",
+            message="Division or modulo by zero triggers a hardware trap (SIGFPE) and terminates the program.",
+            line=line_no,
+            why="Dividing an integer by 0 is undefined behavior in C++ and causes an immediate runtime crash.",
+            fix=None
+        ))
+    return issues
+
+
+def check_assignment_in_conditional(code: str) -> list[dict]:
+    """Flag assignment '=' inside if/while conditions where comparison '==' was likely intended."""
+    issues = []
+    for m in re.finditer(r'\b(if|while)\s*\(\s*([a-zA-Z_]\w*)\s*=\s*([^=][^;)]*)\)', code):
+        kw, var, right = m.group(1), m.group(2), m.group(3).strip()
+        line_no = code[:m.start()].count('\n') + 1
+        issues.append(make_diagnostic(
+            category="WARNING",
+            title=f"Assignment in '{kw}' condition",
+            message=f"Assignment '=' used in '{kw}' condition instead of comparison '=='. The condition tests the assigned value, which is usually unintentional.",
+            line=line_no,
+            why="In C++, assignment '=' returns the assigned value rather than comparing values. Use '==' for equality checks.",
+            fix=f"{var} == {right}"
+        ))
+    return issues
+
+
+def check_loop_direction(code: str) -> list[dict]:
+    """Detect infinite loops where the loop step moves away from the condition boundary."""
+    issues = []
+    m1 = re.search(r'for\s*\([^;]+;\s*([a-zA-Z_]\w*)\s*<[^;]+;\s*\1--\)', code)
+    if m1:
+        line_no = code[:m1.start()].count('\n') + 1
+        issues.append(make_diagnostic(
+            category="BUG",
+            title=f"Infinite loop on '{m1.group(1)}'",
+            message=f"Variable '{m1.group(1)}' decrements in a loop with '<' condition, causing integer underflow and an infinite loop.",
+            line=line_no,
+            why="The loop variable will continuously decrease, never satisfying the termination boundary.",
+            fix=f"{m1.group(1)}++"
+        ))
+    m2 = re.search(r'for\s*\([^;]+;\s*([a-zA-Z_]\w*)\s*>[^;]+;\s*\1\+\+\)', code)
+    if m2:
+        line_no = code[:m2.start()].count('\n') + 1
+        issues.append(make_diagnostic(
+            category="BUG",
+            title=f"Infinite loop on '{m2.group(1)}'",
+            message=f"Variable '{m2.group(1)}' increments in a loop with '>' condition, causing integer overflow and an infinite loop.",
+            line=line_no,
+            why="The loop variable will continuously increase, never satisfying the termination boundary.",
+            fix=f"{m2.group(1)}--"
+        ))
+    return issues
+
 def check_semantic_type_consistency(code, min_confidence=0.30):
     """Report likely variable-name/type mismatches without treating them as errors."""
     report = analyze_semantics(code, min_confidence=min_confidence)
@@ -544,6 +688,11 @@ def _cached_local_static_checks(code, semantic_enabled, semantic_min_confidence)
         check_security_issues(code)
         + check_brace_balance(code)
         + check_variable_shadowing(code)
+        + check_cin_string_whitespace(code)
+        + check_uninitialized_variables(code)
+        + check_division_by_zero(code)
+        + check_assignment_in_conditional(code)
+        + check_loop_direction(code)
         + (check_semantic_type_consistency(code, semantic_min_confidence) if semantic_enabled else [])
     )
     return tuple(tuple(d.items()) for d in diagnostics)

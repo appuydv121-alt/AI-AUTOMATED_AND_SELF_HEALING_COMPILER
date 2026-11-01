@@ -379,7 +379,28 @@ def generate_optimal_program(
     gemini_model: str | None = None,
     ollama_model: str | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    language: str = "cpp",
+    deductions: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str, str]:
+    """Generate and verify an optimised version of *code* using autonomous multi-agent pipeline."""
+    try:
+        from orchestrator import OrchestratorStateMachine
+        orch = OrchestratorStateMachine(
+            code=code,
+            language=language,
+            baseline_stdin=(run_result or {}).get("stdin", ""),
+            max_cycles=3,
+            provider_name=provider_name,
+            gemini_model=gemini_model,
+            ollama_model=ollama_model,
+            progress_callback=progress_callback,
+        )
+        agent_res = orch.run()
+        changes_list = getattr(agent_res, "changes_summary", None) or [getattr(agent_res, "verification_status", "Code successfully optimized and verified.")]
+        changes = "\n".join(f"• {c}" for c in changes_list)
+        return agent_res.optimized_code, changes, getattr(agent_res, "verification_status", "Verified")
+    except Exception as exc:
+        pass
     """Generate and verify an optimised version of *code*.
 
     Returns (optimized_code, change_description, verification_status).

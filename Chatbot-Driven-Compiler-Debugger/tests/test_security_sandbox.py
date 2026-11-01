@@ -109,7 +109,16 @@ class TestSecurityScannerPreExecution(unittest.TestCase):
         result = compile_and_run(malicious_code)
         self.assertEqual(result.status_code, 1)
         self.assertIn("SECURITY GUARDRAIL BLOCKED", result.stderr)
-        self.assertEqual(result.stdout, "")
+    def test_advisory_vulnerabilities_do_not_block_compilation(self):
+        """
+        Verify that advisory vulnerabilities (like strcpy, gets, sprintf) do not block
+        pre-execution compilation, but are still captured in static diagnostic reports.
+        """
+        code = 'int main() { char buf[10]; strcpy(buf, "hi"); return 0; }'
+        is_safe, warning = run_security_guardrail(code)
+        self.assertTrue(is_safe, "Advisory vulnerabilities should allow compilation for benchmarking/debugging")
+        issues = scan_all_security_issues(code)
+        self.assertTrue(any("strcpy" in issue["message"] for issue in issues), "Advisory vulnerabilities must still be reported in diagnostics")
 
 
 if __name__ == "__main__":

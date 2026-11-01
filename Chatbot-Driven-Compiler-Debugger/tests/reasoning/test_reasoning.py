@@ -339,5 +339,26 @@ int main() {
                          f"check_identifier_quality should return empty list, got: {diagnostics}")
 
 
+class TestDefiniteErrorReachability(unittest.TestCase):
+
+    def test_compile_error_facts_reach_definite_error(self):
+        """Verify that compiler error facts ingested from compile_result produce DEFINITE_ERROR findings."""
+        from reasoning.facts import collect
+        from reasoning.pipeline import _compiler_facts_to_findings
+
+        code = "int main() { return undefined_var; }"
+        fake_stderr = "temp_source.cpp:1:21: error: 'undefined_var' was not declared in this scope\n"
+        bundle = collect(code, compile_result={"return_code": 1, "stderr": fake_stderr})
+        
+        # Verify error fact was ingested
+        compiler_facts = [f for f in bundle.facts if f.source == "compiler" and f.kind == "error"]
+        self.assertGreater(len(compiler_facts), 0, "Compiler error fact must be collected from compile_result")
+        
+        # Verify it converts to DEFINITE_ERROR finding
+        findings = _compiler_facts_to_findings(bundle)
+        definite_errors = [f for f in findings if f.tier == Tier.DEFINITE_ERROR]
+        self.assertGreater(len(definite_errors), 0, "DEFINITE_ERROR tier must be assigned to compiler errors")
+
+
 if __name__ == "__main__":
     unittest.main()
