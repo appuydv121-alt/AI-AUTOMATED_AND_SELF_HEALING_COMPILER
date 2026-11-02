@@ -34,8 +34,9 @@ except ImportError:
     REASONING_AVAILABLE = False
 
 # LLM config
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_TAGS_URL = "http://localhost:11434/api/tags"
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+OLLAMA_URL = f"{OLLAMA_HOST}/api/generate"
+OLLAMA_TAGS_URL = f"{OLLAMA_HOST}/api/tags"
 MODEL_NAME = "qwen2.5-coder:7b"
 SEMANTIC_ANALYSIS_ENABLED = os.environ.get("SEMANTIC_ANALYSIS_ENABLED", "true").lower() not in {"0", "false", "no"}
 TERMINAL_OUTPUT_PREVIEW_CHARS = 12_000
@@ -74,7 +75,10 @@ def _ensure_ollama_running():
                 ollama_executable = default_executable
 
         if not ollama_executable:
-            return [], "Ollama is not available. Install Ollama and run this app again."
+            return [], (
+                f"Ollama is not reachable at {OLLAMA_HOST}. Start Ollama or configure "
+                "OLLAMA_HOST to a server reachable by this app."
+            )
 
         launch_options = {
             "stdin": subprocess.DEVNULL,
@@ -94,7 +98,7 @@ def _ensure_ollama_running():
                 return _get_ollama_models(), None
             except requests.RequestException:
                 time.sleep(0.5)
-        return [], "Could not connect to the Ollama server at localhost:11434."
+        return [], f"Could not connect to the Ollama server at {OLLAMA_HOST}."
 
 
 def get_ollama_model_status(model_name: str = MODEL_NAME) -> dict[str, str | bool]:
@@ -1149,10 +1153,10 @@ st.sidebar.markdown(
     """
     <div style="background: rgba(34, 197, 94, 0.12); border: 1px solid rgba(34, 197, 94, 0.35); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px;">
         <div style="font-size: 0.85rem; font-weight: 600; color: #22c55e; display: flex; align-items: center; gap: 6px;">
-            <span>🟢</span> <span>100% Offline & Private AI (Ollama)</span>
+            <span>🧠</span> <span>AI via Ollama</span>
         </div>
         <div style="font-size: 0.75rem; color: var(--muted); margin-top: 4px; line-height: 1.35;">
-            Zero API keys required. Compiler diagnostics, AI tutoring, and optimization run on your local machine.
+            No API key required. AI features connect to the configured Ollama server; a cloud deployment needs a reachable Ollama endpoint.
         </div>
     </div>
     """,
