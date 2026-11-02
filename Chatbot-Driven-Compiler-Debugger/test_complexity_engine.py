@@ -68,3 +68,29 @@ def test_recursive_fibonacci():
     assert res.time_complexity == "O(2^N)"
     assert res.space_complexity == "O(N)"
 
+
+def test_fixed_integer_loop_bounds_are_constant_time():
+    code = """int main() {
+    int sum = 0;
+    for (int i = 0; i < 100; ++i) {
+        sum += i;
+    }
+    return sum;
+}"""
+
+    res = analyze_algorithmic_complexity(code, language="cpp")
+
+    assert res.time_complexity == "O(1)"
+    assert "fixed integer-literal bounds" in res.tc_derivation
+
+
+def test_small_stream_output_is_not_reported_as_performance_optimization():
+    code = """#include <iostream>
+int main() {
+    std::cout << 42 << std::endl;
+    return 0;
+}"""
+
+    res = analyze_algorithmic_complexity(code, language="cpp")
+
+    assert not any("sync_with_stdio" in item or "std::endl" in item for item in res.optimizations)

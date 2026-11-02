@@ -3,7 +3,6 @@ import unittest
 from unittest.mock import Mock, patch
 
 from ai_providers import (
-    GeminiProvider,
     GroqProvider,
     LLMProvider,
     OllamaProvider,
@@ -69,9 +68,75 @@ class TestProviderFallback(unittest.TestCase):
         with patch("ai_providers._http_post", side_effect=RuntimeError("429 rate limited")):
             self.assertRaises(RuntimeError, lambda: providers[0].generate("hi"))
 
-    def test_cloud_provider_requires_key(self):
-        p = GeminiProvider(api_key="")
-        self.assertFalse(p.is_available())
+
+class TestOllamaTaskRouting(unittest.TestCase):
+    @patch("llm_provider._cache_put")
+    @patch("llm_provider._call_ollama", return_value='{"ok": true}')
+    @patch("llm_provider._cache_get", return_value=None)
+    def test_explicit_ollama_provider_calls_ollama(self, _cache_get, call_ollama, _cache_put):
+        result, provider, model = llm_provider.generate_task(
+            "default",
+            "Return JSON.",
+            provider_name="ollama",
+            ollama_model="qwen2.5-coder:7b",
+            max_tokens=2048,
+        )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual((provider, model), ("ollama", "qwen2.5-coder:7b"))
+        self.assertEqual(call_ollama.call_args.kwargs["max_tokens"], 2048)
+
+    @patch("llm_provider._call_ollama")
+    def test_disabled_provider_is_rejected(self, call_ollama):
+        with self.assertRaisesRegex(RuntimeError, "Only the Ollama provider is enabled"):
+            llm_provider.generate_task(
+                "default",
+                "Return JSON.",
+                provider_name="groq",
+            )
+
+        call_ollama.assert_not_called()
+
+    @patch("llm_provider._cache_put")
+    @patch("llm_provider._call_ollama")
+    @patch("llm_provider._cache_get", return_value={"ok": True})
+    def test_cache_hit_does_not_call_provider(self, _cache_get, call_ollama, _cache_put):
+        events = []
+        result, provider, model = llm_provider.generate_task(
+            "default",
+            "Return JSON.",
+            provider_name="ollama",
+            progress_callback=events.append,
+        )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(provider, "ollama")
+        self.assertEqual(model, llm_provider._env("LIVE_MODEL", "qwen2.5-coder:3b"))
+        self.assertEqual(events, [{"stage": "cached"}])
+        call_ollama.assert_not_called()
+
+    @patch("requests.post")
+    @patch("llm_provider._ollama_model_available", return_value=(True, ""))
+    @patch("llm_provider._env")
+    def test_optimal_code_request_uses_full_output_budget(self, mock_env, _available, mock_post):
+        mock_env.side_effect = lambda name, default="": {
+            "OLLAMA_HOST": "http://localhost:11434",
+            "OLLAMA_NUM_CTX": "8192",
+        }.get(name, default)
+        response = Mock(status_code=200)
+        response.json.return_value = {"response": "complete"}
+        mock_post.return_value = response
+
+        with patch.dict(llm_provider._OLLAMA_MAX_TOKENS, {"optimal_code": 4096}):
+            llm_provider._call_ollama(
+                "optimal_code",
+                "Return a complete program.",
+                model="qwen2.5-coder:7b",
+            )
+
+        options = mock_post.call_args.kwargs["json"]["options"]
+        self.assertEqual(options["num_predict"], 4096)
+        self.assertEqual(options["num_ctx"], 8192)
 
     @patch("ai_providers.requests.post")
     def test_ollama_stream_reports_real_generation_events(self, mock_post):
@@ -240,19 +305,39 @@ class TestOptimizationValidation(unittest.TestCase):
         analysis_event = next(event for event in events if event["stage"] == "analysis")
         self.assertEqual(analysis_event["analysis"]["current_complexity"]["time"], "O(n^2)")
 
+    @patch("live_suggester.run_self_refine_loop")
+    @patch("live_suggester.run_security_guardrail")
+    @patch("live_suggester.compile_and_run")
     @patch("llm_provider.generate_task")
-    def test_generate_optimal_program_uses_selected_model(self, mock_gen):
-        mock_gen.return_value = ("```cpp\nint main(){ return 0; }\n```", "ollama", "qwen2.5-coder:7b")
+    def test_generate_optimal_program_returns_single_model_response_without_verification(
+        self, mock_gen, mock_compile, mock_security, mock_refine
+    ):
+        generated = "int main(){ return 42; }"
+        mock_gen.return_value = (f"```cpp\n{generated}\n```", "ollama", "llama3.1:8b")
 
-        generate_optimal_program(
+        result = generate_optimal_program(
             "int main(){ return 0; }",
             [],
             {"return_code": 0},
             provider_name="ollama",
-            model="qwen2.5-coder:7b",
+            ollama_model="llama3.1:8b",
         )
 
-        mock_gen.assert_called()
+        self.assertEqual(result[0], generated)
+        self.assertEqual(result[2], "Generated (not verified)")
+        mock_gen.assert_called_once()
+        self.assertEqual(mock_gen.call_args.args[0], "optimal_code")
+        self.assertEqual(mock_gen.call_args.kwargs["ollama_model"], "llama3.1:8b")
+        mock_compile.assert_not_called()
+        mock_security.assert_not_called()
+        mock_refine.assert_not_called()
+
+    @patch("llm_provider.generate_task", return_value=("print('ready')", "ollama", "model"))
+    def test_generate_optimal_program_accepts_unfenced_source(self, _mock_gen):
+        result = generate_optimal_program("print('old')", language="python")
+
+        self.assertEqual(result[0], "print('ready')")
+        self.assertEqual(result[2], "Generated (not verified)")
 
     def test_self_refine_loop_limit(self):
         attempts = []

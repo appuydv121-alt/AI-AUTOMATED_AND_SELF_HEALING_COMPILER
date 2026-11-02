@@ -9,14 +9,12 @@ import requests
 
 
 _ENV_KEYS = {
-    "gemini": "GEMINI_API_KEY",
     "groq": "GROQ_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
 }
 
 _DEFAULT_MODELS = {
     "ollama": "qwen2.5-coder:7b",
-    "gemini": "gemini-3.1-flash-lite",
     "groq": "llama-3.1-8b-instant",
     "openrouter": "openrouter/auto",
 }
@@ -154,59 +152,6 @@ class OllamaProvider(LLMProvider):
             raise RuntimeError(str(exc)) from exc
 
 
-class GeminiProvider(LLMProvider):
-    provider_name = "gemini"
-
-    def __init__(self, model: str | None = None, api_key: str | None = None):
-        self.base_url = "https://generativelanguage.googleapis.com/v1beta"
-        super().__init__(model=model or _read_env("GEMINI_MODEL", _DEFAULT_MODELS["gemini"]), api_key=api_key if api_key is not None else _read_env("GEMINI_API_KEY", ""))
-
-    def is_available(self) -> bool:
-        return bool(self.api_key)
-
-    def list_models(self) -> list[str]:
-        if not self.api_key:
-            return []
-        try:
-            response = requests.get(f"{self.base_url}/models?key={self.api_key}", timeout=(3, 10))
-            if response.status_code != 200:
-                return []
-            payload = response.json()
-            models = payload.get("models", [])
-            return [item.get("name", "").replace("models/", "") for item in models if isinstance(item, dict)]
-        except (requests.RequestException, ValueError):
-            return []
-
-    def generate(self, prompt: str, system: str | None = None, *, json_mode: bool = False, temperature: float = 0.1, max_tokens: int = 512, timeout: int = 20, progress_callback: Callable[[dict[str, Any]], None] | None = None) -> str:
-        if not self.api_key:
-            raise RuntimeError("Gemini API key missing")
-        body: dict[str, Any] = {
-            "contents": [{"parts": [{"text": f"{system}\n\n{prompt}" if system else prompt}]}],
-            "generationConfig": {
-                "temperature": float(temperature),
-                "maxOutputTokens": int(max_tokens),
-            },
-        }
-        if json_mode:
-            body["generationConfig"]["responseMimeType"] = "application/json"
-        response = _http_post(
-            f"{self.base_url}/models/{self.model}:generateContent?key={self.api_key}",
-            json_payload=body,
-            timeout=(3, timeout),
-        )
-        if response.status_code == 429:
-            raise RuntimeError("rate limited")
-        if response.status_code not in (200, 201):
-            raise RuntimeError(f"HTTP {response.status_code}")
-        payload = response.json()
-        candidates = payload.get("candidates", [])
-        if not candidates:
-            return ""
-        parts = candidates[0].get("content", {}).get("parts", [])
-        text = "".join(part.get("text", "") for part in parts if isinstance(part, dict))
-        return text.strip()
-
-
 class GroqProvider(LLMProvider):
     provider_name = "groq"
 
@@ -317,7 +262,6 @@ class OpenRouterProvider(LLMProvider):
 
 _PROVIDER_FACTORY = {
     "ollama": OllamaProvider,
-    "gemini": GeminiProvider,
     "groq": GroqProvider,
     "openrouter": OpenRouterProvider,
 }
@@ -325,25 +269,25 @@ _PROVIDER_FACTORY = {
 
 def get_provider_for_name(name: str, **kwargs: Any) -> LLMProvider:
     key = (name or "ollama").lower().strip()
-    factory = _PROVIDER_FACTORY.get(key, OllamaProvider)
+    try:
+        factory = _PROVIDER_FACTORY[key]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported AI provider: {key}") from exc
     return factory(**kwargs)
 
 
 def resolve_provider_chain(selected_provider: str | None = None, *, allow_cloud: bool = False) -> list[str]:
     selected = (selected_provider or "ollama").lower().strip()
-    ordered = [selected]
-    for name in ["ollama", "gemini", "groq", "openrouter"]:
-        if name not in ordered and (allow_cloud or name == "ollama"):
-            ordered.append(name)
+    if selected not in _PROVIDER_FACTORY:
+        raise ValueError(f"Unsupported AI provider: {selected}")
     if selected == "ollama":
         return ["ollama"]
-    return ordered[:1] if selected else ["ollama"]
+    return [selected, "ollama"] if allow_cloud else [selected]
 
 
 __all__ = [
     "LLMProvider",
     "OllamaProvider",
-    "GeminiProvider",
     "GroqProvider",
     "OpenRouterProvider",
     "get_provider_for_name",

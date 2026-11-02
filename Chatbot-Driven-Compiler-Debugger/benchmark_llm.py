@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
-"""benchmark_llm.py — Time Gemini and Ollama on 3 sample C++ programs.
+"""benchmark_llm.py — Time local Ollama models on 3 sample C++ programs.
 
 Usage:
     python benchmark_llm.py
 
-Set GEMINI_API_KEY in .env or as an environment variable before running.
 Results show latency (seconds) and whether the JSON parsed with all required fields.
 """
 from __future__ import annotations
 
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -18,7 +16,7 @@ from pathlib import Path
 # Ensure project root is on path when run from outside the project dir.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-# Load .env so GEMINI_API_KEY is visible.
+# Load local model configuration from .env.
 try:
     from dotenv import load_dotenv
     load_dotenv(Path(__file__).resolve().parent / ".env", override=False)
@@ -145,13 +143,10 @@ def _benchmark_task(label: str, code: str, provider_name: str, model: str | None
 
 def main() -> None:
     print("\n=== LLM Benchmark ===\n")
-    print(f"GEMINI_API_KEY set: {bool(os.environ.get('GEMINI_API_KEY', '').strip())}")
-    print(f"Gemini model:  {_llm._GEMINI_MODEL}")
     print(f"Live model:    {_llm._LIVE_MODEL}")
     print(f"Codegen model: {_llm._CODEGEN_MODEL}\n")
 
     configs: list[tuple[str, str | None]] = [
-        ("gemini",  None),
         ("ollama",  _llm._LIVE_MODEL),
         ("ollama",  _llm._CODEGEN_MODEL),
     ]

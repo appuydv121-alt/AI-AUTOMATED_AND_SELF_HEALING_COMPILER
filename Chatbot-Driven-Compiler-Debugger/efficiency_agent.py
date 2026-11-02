@@ -2,7 +2,7 @@
 
 Responsibilities:
   - Consumes runtime profile metrics (median execution latency, memory, runs) and AST deductions.
-  - Identifies algorithmic complexity hotspots (e.g. O(N^2) loops, redundant allocations, unbuffered I/O).
+  - Identifies algorithmic complexity hotspots (e.g. O(N^2) loops and redundant allocations).
   - Proposes minimal algorithmic or data-structural changes to reduce Big-O and execution time.
   - Emits strictly typed JSON matching EFFICIENCY_SCHEMA.
 """
@@ -56,7 +56,6 @@ def run_efficiency_profile(
     evidence: dict[str, Any],
     language: str = "cpp",
     provider_name: str | None = None,
-    gemini_model: str | None = None,
     ollama_model: str | None = None,
 ) -> EfficiencyProfileResult:
     """Analyze empirical execution profile and code structure for algorithmic efficiency gains."""
@@ -64,8 +63,10 @@ def run_efficiency_profile(
     task_instructions = (
         "Analyze the provided source code and empirical execution profile for performance bottlenecks.\n"
         f"Profile Metrics: Median Runtime = {profile_metrics.get('median_time_ms', 0)} ms across {profile_metrics.get('runs_count', 0)} runs.\n"
-        "Look for: O(N^2) or higher nested loops, unbuffered I/O (cin/cout without sync_with_stdio), "
-        "excessive buffer flushes (std::endl in loop), redundant string/vector copies, or unindexed queries.\n"
+        "Look for: O(N^2) or higher nested loops, repeated expensive operations, redundant string/vector copies, "
+        "unindexed queries, loop-invariant work, and safe closed-form reductions of fixed-bound arithmetic loops. "
+        "Treat I/O as a bottleneck only when profiling evidence shows substantial or "
+        "repeated I/O cost; one input/output operation is not an optimization opportunity. "
         "Estimate overall asymptotic time complexity (est_big_o) and propose targeted minimal improvements."
     )
 
@@ -100,7 +101,6 @@ def run_efficiency_profile(
                 prompt,
                 schema=EFFICIENCY_SCHEMA,
                 provider_name=provider_name,
-                gemini_model=gemini_model,
                 ollama_model=ollama_model,
                 language=language,
             )
@@ -119,15 +119,4 @@ def run_efficiency_profile(
         except Exception:
             pass
 
-    # Fallback to local heuristic if LLM unavailable
-    if not hotspots and language.lower() in ("cpp", "c++"):
-        if "ios_base::sync_with_stdio" not in code and ("cin" in code or "cout" in code):
-            hotspots.append(HotspotFinding(
-                line=None,
-                complexity="I/O Overhead",
-                reason="Unbuffered standard streams introduce heavy C/C++ sync overhead.",
-                suggested_change="Add ios_base::sync_with_stdio(false); cin.tie(NULL);",
-            ))
-
     return EfficiencyProfileResult(hotspots=hotspots, est_big_o=est_big_o)
-

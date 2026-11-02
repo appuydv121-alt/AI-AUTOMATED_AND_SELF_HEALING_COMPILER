@@ -54,7 +54,7 @@ from reasoning.tier_policy import HEDGING, assign_tier
 from reasoning.verify import verify_patch
 
 # ── Pipeline-level result cache (session_state is not available here) ───────
-# Keyed by SHA-256 of (source, run_result, profile, provider, gemini_model, ollama_model).
+# Keyed by SHA-256 of (source, run_result, profile, provider, ollama_model).
 # Cleared when cache grows beyond 32 entries to prevent memory bloat.
 _PIPELINE_CACHE: dict[str, ReasoningResult] = {}
 _PIPELINE_CACHE_MAX = 32
@@ -65,7 +65,6 @@ def _pipeline_cache_key(
     run_result: dict | None,
     profile: str,
     provider_name: str,
-    gemini_model: str | None,
     ollama_model: str | None,
     language: str = "cpp",
 ) -> str:
@@ -75,7 +74,6 @@ def _pipeline_cache_key(
             "run_result": run_result or {},
             "profile": profile,
             "provider": provider_name,
-            "gemini_model": gemini_model or "",
             "ollama_model": ollama_model or "",
             "language": language,
         },
@@ -91,7 +89,6 @@ def run_reasoning(
     profile: str = "",
     work_dir: str | None = None,
     provider_name: str = "",
-    gemini_model: str | None = None,
     ollama_model: str | None = None,
     language: str = "cpp",
 ) -> ReasoningResult:
@@ -112,10 +109,7 @@ def run_reasoning(
     work_dir : str, optional
         Working directory for temp files.
     provider_name : str
-        ``"gemini"`` or ``"ollama"``.  Forwarded to
-        ``llm_client.set_provider()`` so the correct backend is used.
-    gemini_model : str, optional
-        Gemini model name selected in the sidebar.
+        Local provider name forwarded to ``llm_client.set_provider()``.
     ollama_model : str, optional
         Ollama model name selected in the sidebar.
     language : str, optional
@@ -128,7 +122,7 @@ def run_reasoning(
     """
     # ── Provider injection ─────────────────────────────────────────────
     if provider_name:
-        set_provider(provider_name, gemini_model=gemini_model, ollama_model=ollama_model)
+        set_provider(provider_name, ollama_model=ollama_model)
 
     # ── Auto-quick profile on clean runs ───────────────────────────────
     rr = run_result or {}
@@ -141,8 +135,8 @@ def run_reasoning(
     # ── Result cache ───────────────────────────────────────────────────
     cache_key = _pipeline_cache_key(
         source, run_result, profile,
-        provider_name or "gemini",
-        gemini_model, ollama_model,
+        provider_name or "ollama",
+        ollama_model,
         language=language,
     )
     if cache_key in _PIPELINE_CACHE:

@@ -1,7 +1,11 @@
 import subprocess
 import os
+import threading
 import time
 from secure_scan import run_security_guardrail
+
+DEFAULT_MAX_OUTPUT_BYTES = 256 * 1024
+_OUTPUT_READ_CHUNK_BYTES = 8192
 
 
 class RunResult(tuple):
@@ -16,11 +20,30 @@ class RunResult(tuple):
         result.exit_code
         result.execution_time
         result.timed_out
+        result.output_limited
     """
-    def __new__(cls, status_code: int, stdout: str, stderr: str, exit_code: int = 0, execution_time: float = 0.0, timed_out: bool = False):
+    def __new__(
+        cls,
+        status_code: int,
+        stdout: str,
+        stderr: str,
+        exit_code: int = 0,
+        execution_time: float = 0.0,
+        timed_out: bool = False,
+        output_limited: bool = False,
+    ):
         return super().__new__(cls, (status_code, stdout, stderr))
 
-    def __init__(self, status_code: int, stdout: str, stderr: str, exit_code: int = 0, execution_time: float = 0.0, timed_out: bool = False):
+    def __init__(
+        self,
+        status_code: int,
+        stdout: str,
+        stderr: str,
+        exit_code: int = 0,
+        execution_time: float = 0.0,
+        timed_out: bool = False,
+        output_limited: bool = False,
+    ):
         self.status_code = status_code
         self.return_code = status_code
         self.stdout = stdout
@@ -28,6 +51,115 @@ class RunResult(tuple):
         self.exit_code = exit_code
         self.execution_time = execution_time
         self.timed_out = timed_out
+        self.output_limited = output_limited
+
+
+def _run_with_output_limit(
+    command: list[str],
+    stdin_input: str,
+    timeout: float,
+    max_output_bytes: int,
+) -> tuple[int, str, str, bool, bool]:
+    """Run a process while retaining bounded stdout/stderr and draining both pipes."""
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    output_buffers = [bytearray(), bytearray()]
+    output_size = 0
+    output_lock = threading.Lock()
+    output_limit_reached = threading.Event()
+    stream_errors: list[OSError] = []
+
+    def stop_process() -> None:
+        if process.poll() is None:
+            try:
+                process.terminate()
+            except OSError:
+                return
+
+    def read_stream(stream, buffer: bytearray) -> None:
+        nonlocal output_size
+        try:
+            while True:
+                chunk = stream.read(_OUTPUT_READ_CHUNK_BYTES)
+                if not chunk:
+                    return
+                with output_lock:
+                    available = max_output_bytes - output_size
+                    if available > 0:
+                        buffer.extend(chunk[:available])
+                        output_size += min(len(chunk), available)
+                    exceeded_limit = len(chunk) > available
+                if exceeded_limit:
+                    output_limit_reached.set()
+        except OSError as error:
+            stream_errors.append(error)
+
+    def write_stdin() -> None:
+        try:
+            if stdin_input:
+                process.stdin.write(stdin_input.encode("utf-8"))
+                process.stdin.flush()
+        except BrokenPipeError:
+            pass
+        except OSError as error:
+            if process.poll() is None:
+                stream_errors.append(error)
+        finally:
+            try:
+                process.stdin.close()
+            except OSError:
+                pass
+
+    readers = [
+        threading.Thread(target=read_stream, args=(process.stdout, output_buffers[0]), daemon=True),
+        threading.Thread(target=read_stream, args=(process.stderr, output_buffers[1]), daemon=True),
+    ]
+    writer = threading.Thread(target=write_stdin, daemon=True)
+    for reader in readers:
+        reader.start()
+    writer.start()
+
+    timed_out = False
+    deadline = time.monotonic() + timeout
+    while process.poll() is None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            timed_out = True
+            stop_process()
+            break
+        try:
+            process.wait(timeout=min(remaining, 0.05))
+        except subprocess.TimeoutExpired:
+            continue
+
+    if timed_out:
+        try:
+            process.wait(timeout=0.5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+
+    writer.join()
+    for reader in readers:
+        reader.join()
+
+    if stream_errors:
+        raise OSError(f"Could not capture process output: {stream_errors[0]}")
+
+    output_limited = output_limit_reached.is_set()
+    stdout = output_buffers[0].decode("utf-8", errors="replace")
+    stderr = output_buffers[1].decode("utf-8", errors="replace")
+    if output_limited:
+        notice = (
+            f"Output capture limited to {max_output_bytes // 1024} KB; "
+            "output beyond this amount was discarded."
+        )
+        stderr = f"{stderr}\n{notice}" if stderr else notice
+    return process.returncode, stdout, stderr, timed_out, output_limited
 
 
 def init_sandbox_db(conn) -> None:
@@ -74,7 +206,14 @@ def init_sandbox_db(conn) -> None:
     conn.commit()
 
 
-def compile_and_run(cpp_code: str, stdin_input: str = "", timeout_compile: int = 10, timeout_run: int = 5, language: str = "cpp") -> RunResult:
+def compile_and_run(
+    cpp_code: str,
+    stdin_input: str = "",
+    timeout_compile: int = 10,
+    timeout_run: float = 5,
+    language: str = "cpp",
+    max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
+) -> RunResult:
     """
     Compiles and runs code with optional stdin input across supported languages.
     Returns: RunResult (status_code, stdout, stderr)
@@ -84,6 +223,8 @@ def compile_and_run(cpp_code: str, stdin_input: str = "", timeout_compile: int =
      -1 = Timeout/System Error
     """
     app_dir = os.path.dirname(os.path.abspath(__file__))
+    if max_output_bytes < 1:
+        raise ValueError("max_output_bytes must be greater than zero.")
 
     # Edge case: cap input at ~100KB
     if stdin_input and len(stdin_input) > 100 * 1024:
@@ -256,47 +397,54 @@ def compile_and_run(cpp_code: str, stdin_input: str = "", timeout_compile: int =
             executable_base if os.path.isfile(executable_base) else executable_exe
         )
         run_start = time.time()
-        run_process = subprocess.run(
+        return_code, stdout, stderr, timed_out, output_limited = _run_with_output_limit(
             [binary_to_run],
-            input=stdin_input,
-            capture_output=True, 
-            text=True, 
-            timeout=timeout_run
+            stdin_input=stdin_input,
+            timeout=timeout_run,
+            max_output_bytes=max_output_bytes,
         )
         execution_time = time.time() - run_start
 
+        if timed_out:
+            return RunResult(
+                -1,
+                stdout,
+                "Execution timed out. Your program may be waiting for more input or stuck in an infinite loop."
+                + (
+                    f"\nOutput capture was limited to {max_output_bytes // 1024} KB."
+                    if output_limited
+                    else ""
+                ),
+                exit_code=-1,
+                execution_time=execution_time,
+                timed_out=True,
+                output_limited=output_limited,
+            )
+
         # 3. CATCH RUNTIME CRASHES & NON-ZERO EXITS
-        if run_process.returncode != 0:
-            is_crash = run_process.returncode < 0 or (run_process.returncode & 0xFFFFFFFF) >= 0xC0000000
+        if return_code != 0:
+            is_crash = return_code < 0 or (return_code & 0xFFFFFFFF) >= 0xC0000000
             if is_crash:
-                crash_reason = run_process.stderr.strip() if run_process.stderr else f"Process crashed with exit code {run_process.returncode} (Likely Segmentation Fault)"
+                crash_reason = stderr.strip() if stderr else f"Process crashed with exit code {return_code} (Likely Segmentation Fault)"
             else:
-                crash_reason = run_process.stderr.strip() if run_process.stderr else f"Process exited with non-zero exit code {run_process.returncode}"
+                crash_reason = stderr.strip() if stderr else f"Process exited with non-zero exit code {return_code}"
             return RunResult(
                 2,
-                run_process.stdout,
+                stdout,
                 crash_reason,
-                exit_code=run_process.returncode,
+                exit_code=return_code,
                 execution_time=execution_time,
+                output_limited=output_limited,
             )
 
         # 4. GRACEFUL SUCCESSFUL EXIT (exit code 0)
         return RunResult(
             0,
-            run_process.stdout,
-            run_process.stderr,
+            stdout,
+            stderr,
             exit_code=0,
             execution_time=execution_time,
-        )
-
-    except subprocess.TimeoutExpired:
-        return RunResult(
-            -1,
-            "",
-            "Execution timed out. Your program may be waiting for more input or stuck in an infinite loop.",
-            exit_code=-1,
-            execution_time=float(timeout_run),
-            timed_out=True,
+            output_limited=output_limited,
         )
     except Exception as e:
         return RunResult(-1, "", f"❌ System Error: {str(e)}", exit_code=-1, execution_time=0.0)

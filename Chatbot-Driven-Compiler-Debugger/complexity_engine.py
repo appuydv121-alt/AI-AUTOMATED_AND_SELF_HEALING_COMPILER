@@ -69,6 +69,9 @@ def analyze_algorithmic_complexity(
 
     # 5. Loop Nesting Depth & Loop Stepping
     max_nesting_depth = _calculate_max_loop_nesting(loops)
+    all_loops_have_fixed_bounds = bool(loops) and all(
+        _has_fixed_integer_bounds(loop) for loop in loops
+    )
     has_dividing_step = bool(re.search(r"(\/=|>>=|\bdivide)\s*", clean_code))
 
     # ── DERIVE TIME COMPLEXITY (TC) ──────────────────────────────────────────
@@ -109,6 +112,16 @@ def analyze_algorithmic_complexity(
             "suggested_change": "Use an unordered_set or unordered_map for O(1) lookups.",
         })
         optimizations.append("Use a hash-based lookup structure (std::unordered_set / unordered_map) to achieve O(1) queries.")
+    elif (
+        all_loops_have_fixed_bounds
+        and not has_sort_inside_loop
+        and not has_linear_inside_loop
+        and not has_log_inside_loop
+        and not has_sort_outside
+        and not has_binary_search_outside
+    ):
+        tc = "O(1)"
+        tc_derivation = "All loops use fixed integer-literal bounds, so their iteration count does not scale with input size."
     elif has_log_inside_loop and max_nesting_depth == 1:
         tc = "O(N log N)"
         tc_derivation = "A linear loop of size $N$ invokes a logarithmic binary search ($O(\\log N)$) per iteration."
@@ -170,12 +183,6 @@ def analyze_algorithmic_complexity(
     else:
         sc = "O(1)"
         sc_derivation = "Allocates a fixed number of scalar variables on the stack; auxiliary memory does not scale with input size."
-
-    # I/O optimizations
-    if lang in ("cpp", "c++") and "sync_with_stdio" not in clean_code and ("cin" in clean_code or "cout" in clean_code):
-        optimizations.append("Add `std::ios_base::sync_with_stdio(false); std::cin.tie(NULL);` to untie C++ streams from C stdio.")
-    if "endl" in clean_code:
-        optimizations.append("Replace `std::endl` with `'\\n'` to avoid forcing redundant buffer flushes on every print.")
 
     # ── STEP-BY-STEP EXECUTION WALKTHROUGH ────────────────────────────────────
     steps = _generate_logical_steps(clean_code, lang, stdin_input, stdout, loops, has_sort_inside_loop, has_sort_outside)
@@ -304,6 +311,54 @@ def _calculate_max_loop_nesting(loops: list[dict[str, Any]]) -> int:
                 depth += 1
         max_d = max(max_d, depth)
     return max_d
+
+
+def _has_fixed_integer_bounds(loop: dict[str, Any]) -> bool:
+    if loop.get("type") != "for":
+        return False
+
+    parts = loop.get("header", "").split(";")
+    if len(parts) != 3:
+        return False
+
+    init_match = re.fullmatch(
+        r"\s*(?:[A-Za-z_]\w*\s+)?([A-Za-z_]\w*)\s*=\s*(-?\d+)\s*",
+        parts[0],
+    )
+    if not init_match:
+        return False
+    variable = re.escape(init_match.group(1))
+
+    condition_match = re.fullmatch(
+        rf"\s*{variable}\s*(<|<=|>|>=)\s*(-?\d+)\s*",
+        parts[1],
+    )
+    if not condition_match:
+        return False
+
+    update = re.sub(r"\s+", "", parts[2])
+    positive_step = {
+        f"++{init_match.group(1)}",
+        f"{init_match.group(1)}++",
+    }
+    negative_step = {
+        f"--{init_match.group(1)}",
+        f"{init_match.group(1)}--",
+    }
+    positive_step.update(
+        f"{init_match.group(1)}+={step}"
+        for step in re.findall(rf"^{variable}\+=([1-9]\d*)$", update)
+    )
+    negative_step.update(
+        f"{init_match.group(1)}-={step}"
+        for step in re.findall(rf"^{variable}-=([1-9]\d*)$", update)
+    )
+
+    operator = condition_match.group(1)
+    return (
+        (operator in ("<", "<=") and update in positive_step)
+        or (operator in (">", ">=") and update in negative_step)
+    )
 
 
 def _generate_logical_steps(

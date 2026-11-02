@@ -1,9 +1,9 @@
 """test_generator_agent.py — Edge-Case & Equivalence Test Matrix Synthesizer.
 
 Responsibilities:
-  - Analyzes the input expectations of the code.
+  - Generates representative sample inputs from the code's apparent input format.
   - Generates 6-10 diverse edge-case inputs (empty input, zero, negative numbers, boundary values, whitespace).
-  - Supplies the SandboxJudge with an input matrix to rigorously test functional equivalence between original and patched code.
+  - Supplies the SandboxJudge with samples for behavioral comparison; generated cases are not a proof of equivalence.
 """
 from __future__ import annotations
 
@@ -53,7 +53,6 @@ def generate_test_matrix(
     baseline_stdin: str = "",
     language: str = "cpp",
     provider_name: str | None = None,
-    gemini_model: str | None = None,
     ollama_model: str | None = None,
     count: int = 6,
 ) -> list[TestCase]:
@@ -91,7 +90,6 @@ def generate_test_matrix(
                 prompt,
                 schema=TEST_GEN_SCHEMA,
                 provider_name=provider_name,
-                gemini_model=gemini_model,
                 ollama_model=ollama_model,
                 language=language,
             )
@@ -134,4 +132,3 @@ def generate_test_matrix(
                 cases.append(fb)
 
     return cases[: max(count, len(cases))]
-

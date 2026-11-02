@@ -20,10 +20,18 @@ def test_efficiency_profile_with_mocked_llm():
         assert res.hotspots[0].complexity == "O(N^2)"
 
 
-def test_efficiency_profile_fallback():
-    code = "#include <iostream>\nint main() { std::cin >> x; std::cout << x; }"
+def test_efficiency_profile_does_not_invent_io_hotspot():
+    code = """#include <iostream>
+using namespace std;
+int main() {
+    int sum = 0;
+    for (int i = 0; i < 100; ++i) {
+        sum += i;
+    }
+    cout << sum << endl;
+    return 0;
+}"""
     with patch("efficiency_agent._llm.generate_task", side_effect=RuntimeError("LLM Offline")):
         res = run_efficiency_profile(code, {}, language="cpp")
-        assert len(res.hotspots) >= 1
-        assert "ios_base" in res.hotspots[0].suggested_change
-
+        assert res.hotspots == []
+        assert res.est_big_o == "O(1)"

@@ -9,6 +9,8 @@ Enforces:
 from __future__ import annotations
 
 import difflib
+import re
+import statistics
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
@@ -17,11 +19,11 @@ import llm_provider as _llm
 from agent_guard import build_guarded_prompt, wrap_code_data
 from compiler_service import compile_and_run
 from efficiency_agent import run_efficiency_profile
-from memory_store import record_experience, retrieve_similar_experiences
+from memory_store import retrieve_similar_experiences
 from secure_scan import compute_code_quality_metrics, run_security_guardrail
 from security_agent import run_security_audit
 from test_generator_agent import generate_test_matrix
-from tool_runner import collect_empirical_evidence, measure_execution_profile
+from tool_runner import collect_empirical_evidence, measure_execution_profile, run_sanitizer_analysis
 
 
 @dataclass
@@ -55,6 +57,80 @@ class OrchestratorResult:
     active_model: str = ""
 
 
+def _extract_code_block(raw: str, language: str = "cpp") -> str:
+    """Extract the most complete code block from an LLM response."""
+    if not raw or not raw.strip():
+        return ""
+    text = raw.strip()
+
+    lang_tags = [
+        language.lower(),
+        "cpp",
+        "c++",
+        "c",
+        "python",
+        "py",
+        "javascript",
+        "js",
+        "typescript",
+        "ts",
+        "sql",
+    ]
+    language_pattern = "|".join(re.escape(tag) for tag in lang_tags)
+    pattern = rf"```(?:{language_pattern})?\s*([\s\S]*?)```"
+    matches = re.findall(pattern, text, re.IGNORECASE)
+    if matches:
+        longest = max(matches, key=len).strip()
+        if longest:
+            return longest
+
+    generic_matches = re.findall(r"```\s*([\s\S]*?)```", text)
+    if generic_matches:
+        longest = max(generic_matches, key=len).strip()
+        if longest:
+            return longest
+
+    lines = text.splitlines()
+    code_lines = [
+        line
+        for line in lines
+        if not line.strip().startswith(("Here is", "Here's", "Sure,", "Note:", "I have"))
+    ]
+    return "\n".join(code_lines).strip()
+
+
+def _compare_test_case(reference_run, candidate_run, test_name: str) -> tuple[bool, str]:
+    if getattr(reference_run, "timed_out", False) or reference_run[0] == -1:
+        return False, f"Reference program timed out on '{test_name}'; equivalence cannot be verified."
+    if reference_run[0] != 0:
+        return False, (
+            f"Reference program did not complete successfully on '{test_name}' "
+            f"(status {reference_run[0]}); equivalence cannot be verified."
+        )
+    if getattr(reference_run, "output_limited", False):
+        return False, f"Reference output exceeded the capture limit on '{test_name}'; equivalence cannot be verified."
+    if getattr(candidate_run, "timed_out", False) or candidate_run[0] != 0:
+        return False, (
+            f"Candidate did not complete successfully on '{test_name}' "
+            f"(status {candidate_run[0]}): {candidate_run[2].strip()}"
+        )
+    if getattr(candidate_run, "output_limited", False):
+        return False, f"Candidate output exceeded the capture limit on '{test_name}'; equivalence cannot be verified."
+    if reference_run[1] != candidate_run[1]:
+        return False, (
+            f"Output discrepancy on test '{test_name}':\n"
+            f"Expected: {reference_run[1]!r}\nGot: {candidate_run[1]!r}"
+        )
+    return True, ""
+
+
+def _quality_does_not_regress(candidate: dict[str, Any], reference: dict[str, Any]) -> bool:
+    return (
+        candidate.get("security_score", 0.0) >= reference.get("security_score", 0.0)
+        and candidate.get("efficiency_score", 0.0) >= reference.get("efficiency_score", 0.0)
+    )
+
+
 class OrchestratorStateMachine:
     """Supervisor state machine managing multi-agent code optimization and hardening."""
 
@@ -67,7 +143,6 @@ class OrchestratorStateMachine:
         patience: int = 2,
         time_budget_s: float = 120.0,
         provider_name: str | None = None,
-        gemini_model: str | None = None,
         ollama_model: str | None = None,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ):
@@ -78,7 +153,6 @@ class OrchestratorStateMachine:
         self.patience = patience
         self.time_budget_s = time_budget_s
         self.provider_name = provider_name
-        self.gemini_model = gemini_model
         self.ollama_model = ollama_model
         self.progress_callback = progress_callback
 
@@ -88,7 +162,6 @@ class OrchestratorStateMachine:
         self.trace: list[dict[str, Any]] = []
 
         self.best_candidate = code
-        self.best_score = 0.0
         self.no_progress_count = 0
 
     def _transition(self, next_state: str, cycle: int, reason: str):
@@ -127,7 +200,6 @@ class OrchestratorStateMachine:
         """Deterministic algorithmic optimization & hardening for maximum efficiency and security."""
         if self.language in ("cpp", "c++", "c"):
             out = src
-            import re
 
             # 1. Replace Bubble Sort / Selection Sort O(N^2) loops with std::sort (O(N log N))
             loop_start_pat = re.compile(r"\bfor\s*\(", re.MULTILINE)
@@ -208,15 +280,6 @@ class OrchestratorStateMachine:
                 else:
                     out = "#include <algorithm>\n" + out
 
-            # 4. Inject Fast I/O
-            if "sync_with_stdio" not in out:
-                main_pat = re.compile(r"(int\s+main\s*\([^)]*\)\s*\{)", re.MULTILINE)
-                if main_pat.search(out):
-                    fast_io = "\n    ios_base::sync_with_stdio(false);\n    cin.tie(NULL);\n"
-                    out = main_pat.sub(r"\1" + fast_io, out, count=1)
-
-            # 5. Replace endl with '\n'
-            out = out.replace("<< endl", "<< '\\n'").replace("<< std::endl", "<< '\\n'")
             return out
         return src
 
@@ -229,7 +292,6 @@ class OrchestratorStateMachine:
         base_quality = compute_code_quality_metrics(self.code, language=self.language)
         base_sec = base_quality.get("security_score", 0.0)
         base_eff = base_quality.get("efficiency_score", 0.0)
-        self.best_score = base_sec + base_eff
 
         self._log_trace(
             "ToolRunner",
@@ -261,9 +323,13 @@ class OrchestratorStateMachine:
         critic_guidance = ""
         tests_evaluated = 0
         tests_passed = 0
+        best_tests_evaluated = 0
+        best_tests_passed = 0
         best_candidate_metrics = base_quality
+        best_candidate_verified = False
         active_prov = ""
         active_mdl = ""
+        mismatch_error = ""
 
         for cycle in range(1, self.max_cycles + 1):
             cycle_start = time.monotonic()
@@ -281,7 +347,6 @@ class OrchestratorStateMachine:
                 baseline_evidence,
                 language=self.language,
                 provider_name=self.provider_name,
-                gemini_model=self.gemini_model,
                 ollama_model=self.ollama_model,
             )
             self._log_trace(
@@ -300,9 +365,9 @@ class OrchestratorStateMachine:
                 baseline_evidence,
                 language=self.language,
                 provider_name=self.provider_name,
-                gemini_model=self.gemini_model,
                 ollama_model=self.ollama_model,
             )
+            profile_metrics = baseline_evidence.get("profile_metrics", {})
             self._log_trace(
                 "EfficiencyProfilerAgent",
                 f"Efficiency profile completed (Cycle {cycle})",
@@ -316,51 +381,103 @@ class OrchestratorStateMachine:
             self._transition("OPTIMIZE", cycle=cycle, reason="Synthesizing hardened & minimal code patch")
             
             optimizer_prompt = (
-                f"You are the OPTIMIZER agent. Your task is to produce the smallest, cleanest {self.language.upper()} patch "
-                "that resolves all security findings and efficiency bottlenecks while preserving exact functional behavior.\n\n"
+                f"You are the OPTIMIZER agent. Improve the algorithmic and measured runtime efficiency of this "
+                f"{self.language.upper()} program while preserving exact functional behavior. Make only changes "
+                "supported by the supplied code or profiling evidence; do not make cosmetic rewrites.\n\n"
                 f"SECURITY FINDINGS TO FIX:\n"
                 + ("\n".join(f"- {f.cwe}: {f.evidence}. Minimal fix: {f.minimal_fix}" for f in sec_findings) if sec_findings else "(None)")
                 + f"\n\nEFFICIENCY HOTSPOTS TO FIX:\n"
                 + ("\n".join(f"- {h.complexity}: {h.reason}. Suggested change: {h.suggested_change}" for h in eff_result.hotspots) if eff_result.hotspots else "(None)")
+                + f"\n\nPROFILE EVIDENCE:\n"
+                + f"- Median runtime: {profile_metrics.get('median_time_ms', 'unavailable')} ms\n"
+                + f"- Runs: {profile_metrics.get('runs_count', 'unavailable')}\n"
+                + f"- Peak memory: {profile_metrics.get('peak_memory_kb', 'unavailable')} KB\n"
+                + f"- Estimated time complexity: {eff_result.est_big_o}\n"
                 + (f"\n\nCRITIC REFINEMENT GUIDANCE:\n{critic_guidance}" if critic_guidance else "")
                 + (f"\n\n{memory_notes}" if memory_notes else "")
                 + f"\n\nRULES:\n"
                 f"1. Return ONLY the complete corrected program inside a single ```{self.language} code block.\n"
-                f"2. Retain identical I/O formats.\n"
-                f"3. In C++, use fast I/O (ios_base::sync_with_stdio(false); cin.tie(NULL)), initialize all primitives, and use '\\n'.\n\n"
+                f"2. Preserve observable behavior, input/output format, ordering, and all required outputs.\n"
+                f"3. Check for loop-invariant work and closed-form reductions of fixed-bound arithmetic loops; "
+                f"prefer proven reductions in algorithmic complexity or measured work over style changes. "
+                f"Do not add fast-I/O boilerplate or replace std::endl unless the profile shows I/O is a "
+                f"bottleneck and changing flush behavior is safe.\n"
+                f"4. Do not remove outputs, narrow loop domains, or claim a speedup without evidence. If no safe, "
+                f"meaningful optimization is supported, return the original program unchanged.\n\n"
                 f"SOURCE CODE:\n{wrap_code_data(candidate, language=self.language)}"
             )
 
+            optimizer_request = {
+                "cache_hit": False,
+                "request_started": False,
+                "tokens": None,
+            }
+
+            def track_optimizer_request(event: dict[str, Any]) -> None:
+                if event.get("stage") == "cached":
+                    optimizer_request["cache_hit"] = True
+                elif event.get("stage") == "requesting":
+                    optimizer_request["request_started"] = True
+                elif event.get("stage") == "done":
+                    optimizer_request["tokens"] = event.get("tokens")
+
+            candidate_origin = "LLM response"
             try:
                 raw_opt, ap, am = _llm.generate_task(
                     "optimal_code",
                     optimizer_prompt,
                     provider_name=self.provider_name,
-                    gemini_model=self.gemini_model,
                     ollama_model=self.ollama_model,
                     language=self.language,
+                    progress_callback=track_optimizer_request,
                 )
                 active_prov = ap
                 active_mdl = am
-                from agentic_optimizer import extract_code_block
-                candidate_code = extract_code_block(str(raw_opt), language=self.language)
+                candidate_code = _extract_code_block(str(raw_opt), language=self.language)
+                if optimizer_request["cache_hit"]:
+                    response_source = "cached response; no model inference was run"
+                elif optimizer_request["request_started"]:
+                    response_source = "live model request"
+                else:
+                    response_source = "provider returned a response; inference source was not reported"
+                token_count = optimizer_request["tokens"]
+                token_note = f"; generated tokens: {token_count}" if token_count is not None else ""
+                self._log_trace(
+                    "OptimizerAgent",
+                    f"Model response received (Cycle {cycle})",
+                    "info",
+                    f"Provider: {ap}; model: {am}; source: {response_source}{token_note}.",
+                    elapsed_ms=(time.monotonic() - t_opt) * 1000.0,
+                )
             except Exception as exc:
                 self._log_trace("OptimizerAgent", f"Synthesis error (Cycle {cycle})", "error", str(exc), elapsed_ms=(time.monotonic() - t_opt) * 1000.0)
                 candidate_code = self._apply_deterministic_hardening(candidate)
                 ap = "deterministic_agent"
                 am = "rule_based_hardener"
+                candidate_origin = "deterministic hardening (model request failed)"
 
             if not candidate_code or not candidate_code.strip() or candidate_code.strip() == candidate.strip():
+                unchanged_response = bool(candidate_code and candidate_code.strip() == candidate.strip())
                 candidate_code = self._apply_deterministic_hardening(candidate)
-                ap = "structural_optimizer"
-                am = "algorithm_hardener"
+                fallback_reason = "LLM returned unchanged code" if unchanged_response else "LLM returned no usable code"
+                candidate_origin = f"deterministic hardening ({fallback_reason})"
             else:
                 # Apply deterministic algorithmic hardening (O(N^2) sorting -> std::sort, hoist sort, fast I/O) on top of synthesis
                 hardened_cand = self._apply_deterministic_hardening(candidate_code)
                 if hardened_cand and hardened_cand.strip() != candidate_code.strip():
                     candidate_code = hardened_cand
+                    candidate_origin = "LLM response plus deterministic hardening"
 
-            self._log_trace("OptimizerAgent", f"Synthesized patch candidate (Cycle {cycle})", "success", f"Generated {len(candidate_code.splitlines())} lines via {ap} ({am}).", elapsed_ms=(time.monotonic() - t_opt) * 1000.0)
+            candidate_changed = bool(candidate_code.strip()) and candidate_code.strip() != candidate.strip()
+            candidate_status = "success" if candidate_changed else "warning"
+            self._log_trace(
+                "OptimizerAgent",
+                f"Patch candidate {'generated' if candidate_changed else 'unchanged'} (Cycle {cycle})",
+                candidate_status,
+                f"Candidate source: {candidate_origin}; provider/model: {ap} ({am}); "
+                f"source code changed: {'yes' if candidate_changed else 'no'}.",
+                elapsed_ms=(time.monotonic() - t_opt) * 1000.0,
+            )
 
             # 3d. Test Generator Agent (Edge-Case Test Matrix)
             t_testgen = time.monotonic()
@@ -370,7 +487,6 @@ class OrchestratorStateMachine:
                 baseline_stdin=self.baseline_stdin,
                 language=self.language,
                 provider_name=self.provider_name,
-                gemini_model=self.gemini_model,
                 ollama_model=self.ollama_model,
                 count=5,
             )
@@ -387,40 +503,64 @@ class OrchestratorStateMachine:
                 self._log_trace("SandboxJudge", f"Candidate rejected by security guardrail (Cycle {cycle})", "error", sec_msg, elapsed_ms=(time.monotonic() - t_judge) * 1000.0)
                 continue
 
+            if self.language in ("cpp", "c++", "c"):
+                sanitizer_stdin = self.baseline_stdin
+                if not sanitizer_stdin and test_matrix:
+                    sanitizer_stdin = test_matrix[0].stdin
+                sanitizer_findings = run_sanitizer_analysis(
+                    candidate_code,
+                    stdin_input=sanitizer_stdin,
+                )
+                critical_findings = [
+                    finding for finding in sanitizer_findings
+                    if finding.severity.upper() == "CRITICAL"
+                ]
+                if critical_findings:
+                    sanitizer_message = "\n".join(
+                        finding.message for finding in critical_findings[:3]
+                    )
+                    critic_guidance = f"Candidate sanitizer rejection:\n{sanitizer_message}"
+                    self._log_trace(
+                        "SandboxJudge",
+                        f"Candidate rejected by sanitizer (Cycle {cycle})",
+                        "error",
+                        sanitizer_message,
+                        elapsed_ms=(time.monotonic() - t_judge) * 1000.0,
+                    )
+                    continue
+
             # Run candidate across test matrix to test equivalence against original
             passed_tests = 0
             mismatch_error = ""
+            tests_evaluated = 0
+            reference_times: list[float] = []
+            candidate_times: list[float] = []
 
             # First verify candidate compiles
             first_test_stdin = test_matrix[0].stdin if test_matrix else self.baseline_stdin
             probe_run = compile_and_run(candidate_code, stdin_input=first_test_stdin, language=self.language)
-            if probe_run[0] not in (0, -1):
-                # Compilation or immediate execution error
-                mismatch_error = f"Candidate compilation/execution error (exit code {probe_run[0]}):\n{probe_run[2].strip()}"
+            if probe_run[0] != 0:
+                mismatch_error = (
+                    f"Candidate did not complete the verification probe (status {probe_run[0]}):\n"
+                    f"{probe_run[2].strip()}"
+                )
+            elif getattr(probe_run, "output_limited", False):
+                mismatch_error = "Candidate probe output exceeded the capture limit; equivalence cannot be verified."
+            elif not test_matrix:
+                mismatch_error = "No test cases were generated; equivalence cannot be verified."
 
             if not mismatch_error:
                 for tcase in test_matrix:
                     orig_run = compile_and_run(self.code, stdin_input=tcase.stdin, language=self.language)
                     cand_run = compile_and_run(candidate_code, stdin_input=tcase.stdin, language=self.language)
-
-                    # Case A: Original program ran cleanly to completion (exit code 0)
-                    if orig_run[0] == 0:
-                        if cand_run[0] != 0:
-                            mismatch_error = f"Test '{tcase.name}' failed on candidate (exit code {cand_run[0]}): {cand_run[2].strip()}"
-                            break
-                        orig_out = orig_run[1].strip()
-                        cand_out = cand_run[1].strip()
-                        if orig_out != cand_out:
-                            mismatch_error = f"Output discrepancy on test '{tcase.name}':\nExpected: '{orig_out}'\nGot: '{cand_out}'"
-                            break
-                        passed_tests += 1
-                    else:
-                        # Case B: Original program failed or timed out on malformed/empty test input
-                        if cand_run[0] == 0:
-                            passed_tests += 1
-                        # If both failed or timed out on invalid test stdin, candidate matches original behavior
-
-            tests_evaluated = len(test_matrix)
+                    tests_evaluated += 1
+                    passed, comparison_error = _compare_test_case(orig_run, cand_run, tcase.name)
+                    if not passed:
+                        mismatch_error = comparison_error
+                        break
+                    passed_tests += 1
+                    reference_times.append(getattr(orig_run, "execution_time", 0.0))
+                    candidate_times.append(getattr(cand_run, "execution_time", 0.0))
             tests_passed = passed_tests
 
             if mismatch_error:
@@ -434,31 +574,62 @@ class OrchestratorStateMachine:
             cand_quality = compute_code_quality_metrics(candidate_code, language=self.language)
             cand_sec = cand_quality.get("security_score", 0.0)
             cand_eff = cand_quality.get("efficiency_score", 0.0)
-            cand_total_score = cand_sec + cand_eff
-
-            score_improved = cand_total_score > self.best_score
+            quality_improved = (
+                _quality_does_not_regress(cand_quality, best_candidate_metrics)
+                and (
+                    cand_sec > best_candidate_metrics.get("security_score", 0.0)
+                    or cand_eff > best_candidate_metrics.get("efficiency_score", 0.0)
+                )
+            )
+            baseline_runtime = statistics.median(reference_times)
+            candidate_runtime = statistics.median(candidate_times)
+            runtime_tolerance = max(0.25, baseline_runtime * 0.10)
+            runtime_not_regressed = candidate_runtime <= baseline_runtime + runtime_tolerance
+            runtime_improved = candidate_runtime < baseline_runtime - runtime_tolerance
+            score_improved = runtime_not_regressed and (quality_improved or runtime_improved)
 
             if score_improved:
-                self.best_score = cand_total_score
                 self.best_candidate = candidate_code
                 best_candidate_metrics = cand_quality
+                best_candidate_verified = True
+                best_tests_evaluated = tests_evaluated
+                best_tests_passed = passed_tests
                 self.no_progress_count = 0
                 self._log_trace(
                     "SandboxJudge",
                     f"Candidate accepted and verified (Cycle {cycle})",
                     "success",
-                    f"Passed all {tests_passed}/{tests_evaluated} edge-case tests. "
+                    f"Passed all {passed_tests}/{tests_evaluated} generated cases. "
                     f"Security: {cand_sec:.0f}% (was {base_sec:.0f}%), "
-                    f"Efficiency: {cand_eff:.0f}% (was {base_eff:.0f}%).",
+                    f"Efficiency: {cand_eff:.0f}% (was {base_eff:.0f}%). "
+                    f"Median runtime: {candidate_runtime:.2f} ms (reference {baseline_runtime:.2f} ms).",
                     elapsed_ms=(time.monotonic() - t_judge) * 1000.0,
                 )
 
                 # Check if optimal
                 if cand_sec >= 100.0 and cand_eff >= 100.0:
-                    self._transition("COMPLETED", cycle=cycle, reason="Achieved 100% Security & 100% Efficiency")
+                    self._transition(
+                        "COMPLETED",
+                        cycle=cycle,
+                        reason="Both heuristic quality scores reached 100%; behavior checks passed",
+                    )
                     break
             else:
                 self.no_progress_count += 1
+                reason = (
+                    "Candidate regressed measured runtime"
+                    if not runtime_not_regressed
+                    else "Candidate did not improve quality scores or measured runtime"
+                )
+                self._log_trace(
+                    "SandboxJudge",
+                    f"Candidate not accepted (Cycle {cycle})",
+                    "warning",
+                    f"{reason}. Security: {cand_sec:.0f}% (reference {best_candidate_metrics.get('security_score', 0.0):.0f}%), "
+                    f"efficiency: {cand_eff:.0f}% (reference {best_candidate_metrics.get('efficiency_score', 0.0):.0f}%), "
+                    f"median runtime: {candidate_runtime:.2f} ms (reference {baseline_runtime:.2f} ms).",
+                    elapsed_ms=(time.monotonic() - t_judge) * 1000.0,
+                )
                 if self.no_progress_count >= self.patience:
                     self._transition("COMPLETED", cycle=cycle, reason=f"Patience limit reached ({self.patience} cycles without score gain)")
                     break
@@ -485,8 +656,10 @@ class OrchestratorStateMachine:
         ))
         diff_str = "".join(diff_lines)
 
-        verified = (self.best_candidate != self.code) and (self.best_score > (base_sec + base_eff)) and (not mismatch_error)
-        status_label = "Verified & Improved" if verified else ("Verified & Hardened" if self.best_candidate != self.code else "Needs Review")
+        verified = best_candidate_verified and self.best_candidate != self.code
+        status_label = "Verified & Improved" if verified else "Needs Review"
+        reported_tests_evaluated = best_tests_evaluated if best_candidate_verified else tests_evaluated
+        reported_tests_passed = best_tests_passed if best_candidate_verified else tests_passed
 
         # Compute summary of verified changes
         changes_list: list[str] = []
@@ -499,8 +672,15 @@ class OrchestratorStateMachine:
             changes_list.append(f"Security Rating hardened from {sec_b:.0f}% to {sec_a:.0f}%.")
         if eff_a > eff_b:
             changes_list.append(f"Efficiency Rating improved from {eff_b:.0f}% to {eff_a:.0f}%.")
-        if tests_evaluated > 0:
-            changes_list.append(f"Verified functional equivalence on {tests_passed}/{tests_evaluated} edge-case tests.")
+        if best_candidate_verified:
+            changes_list.append(
+                f"Matched the reference output on {reported_tests_passed}/{reported_tests_evaluated} generated cases."
+            )
+        elif reported_tests_evaluated > 0:
+            changes_list.append(
+                f"Functional equivalence was not established ({reported_tests_passed}/{reported_tests_evaluated} cases passed); "
+                "the proposed patch was not accepted."
+            )
         changes_list.append(f"Empirical Sandbox Status: {status_label}")
 
         return OrchestratorResult(
@@ -516,11 +696,10 @@ class OrchestratorStateMachine:
             evidence_report=baseline_evidence,
             metrics_before=metrics_before,
             metrics_after=metrics_after,
-            tests_evaluated=tests_evaluated,
-            tests_passed=tests_passed,
+            tests_evaluated=reported_tests_evaluated,
+            tests_passed=reported_tests_passed,
             cycles_taken=cycle if 'cycle' in locals() else 1,
             total_time_s=round(time.monotonic() - self.start_time, 2),
             active_provider=active_prov or "local",
             active_model=active_mdl or "static-engine",
         )
-

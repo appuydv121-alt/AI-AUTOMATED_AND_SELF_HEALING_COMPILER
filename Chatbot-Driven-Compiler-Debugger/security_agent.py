@@ -53,7 +53,6 @@ def run_security_audit(
     evidence: dict[str, Any],
     language: str = "cpp",
     provider_name: str | None = None,
-    gemini_model: str | None = None,
     ollama_model: str | None = None,
 ) -> list[SecurityFinding]:
     """Audit code for security vulnerabilities using tool evidence as proof."""
@@ -84,7 +83,6 @@ def run_security_audit(
                 prompt,
                 schema=SECURITY_SCHEMA,
                 provider_name=provider_name,
-                gemini_model=gemini_model,
                 ollama_model=ollama_model,
                 language=language,
             )
@@ -118,4 +116,3 @@ def run_security_audit(
                 ))
 
     return findings
-

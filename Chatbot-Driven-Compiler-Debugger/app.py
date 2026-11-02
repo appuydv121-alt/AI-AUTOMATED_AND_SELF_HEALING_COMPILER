@@ -20,11 +20,8 @@ from lldb_engine import agentic_debug_loop
 import diagnostic_engine as diag
 from semantic_analyzer import analyze_semantics, apply_safe_fixes
 import ui_theme
-from ui_themes import setup_ui, pane_marker, status_banner, get_theme, THEMES
-from ai_providers import get_provider_for_name
+from ui_themes import setup_ui, pane_marker, status_banner
 from live_suggester import apply_suggestion_to_code, generate_optimal_program, render_live_suggestions
-from agentic_optimizer import run_agentic_optimizer, AgenticOptimizationResult
-from orchestrator import OrchestratorStateMachine, OrchestratorResult
 from memory_store import record_experience
 import llm_provider as _llm_provider
 
@@ -41,6 +38,21 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_TAGS_URL = "http://localhost:11434/api/tags"
 MODEL_NAME = "qwen2.5-coder:7b"
 SEMANTIC_ANALYSIS_ENABLED = os.environ.get("SEMANTIC_ANALYSIS_ENABLED", "true").lower() not in {"0", "false", "no"}
+TERMINAL_OUTPUT_PREVIEW_CHARS = 12_000
+
+
+def render_terminal_output(output: str, label: str) -> None:
+    st.markdown(ui_theme.code_label(label), unsafe_allow_html=True)
+    if not output:
+        st.code("(no output)", language="text")
+        return
+
+    preview = output[:TERMINAL_OUTPUT_PREVIEW_CHARS]
+    st.code(preview, language="text")
+    if len(output) > TERMINAL_OUTPUT_PREVIEW_CHARS:
+        remaining = output[TERMINAL_OUTPUT_PREVIEW_CHARS:]
+        with st.expander(f"Show remaining captured output ({len(remaining):,} characters)"):
+            st.code(remaining, language="text")
 
 
 def _get_ollama_models():
@@ -116,7 +128,7 @@ def get_ollama_model_status(model_name: str = MODEL_NAME) -> dict[str, str | boo
 
 
 def get_ai_explanation(prompt, unavailable_message="AI check unavailable."):
-    """Send a prompt through the unified LLM provider using current sidebar settings (100% offline via local Ollama)."""
+    """Send a prompt through the unified LLM provider using current sidebar settings."""
     try:
         prov = "ollama"
         oll_mdl = (
@@ -128,7 +140,6 @@ def get_ai_explanation(prompt, unavailable_message="AI check unavailable."):
             "chat",
             prompt,
             provider_name=prov,
-            gemini_model="",
             ollama_model=oll_mdl,
         )
         if active_prov and active_mdl:
@@ -430,13 +441,10 @@ def render_live_ai_optimizer_panel(
     user_code,
     live_ai_enabled,
     live_ai_provider,
-    gemini_live_model,
     ollama_live_model,
     live_ai_max_suggestions,
-    gemini_optimal_model,
-    ollama_optimal_model,
 ):
-    """Render the Live AI Code Suggestions and Optimizer panel."""
+    """Render live AI code suggestions."""
     if not live_ai_enabled:
         st.caption("Live AI Suggestions are currently disabled in the sidebar.")
         return
@@ -446,10 +454,10 @@ def render_live_ai_optimizer_panel(
     )
     _disp_mdl = st.session_state.get("last_served_model") or st.session_state.get(
         "live_suggestions_active_model",
-        gemini_live_model if live_ai_provider == "gemini" else ollama_live_model,
+        ollama_live_model,
     )
     st.caption(f"Active provider: {_disp_prov} • model: {_disp_mdl}")
-    _target_model_display = gemini_live_model if live_ai_provider == "gemini" else ollama_live_model
+    _target_model_display = ollama_live_model
     suggestion_key = (
         user_code,
         live_ai_provider,
@@ -549,7 +557,6 @@ def render_live_ai_optimizer_panel(
                 code=user_code,
                 diagnostics=st.session_state.get("live_diagnostics", []),
                 provider_name=live_ai_provider,
-                gemini_model=gemini_live_model,
                 ollama_model=ollama_live_model,
                 max_items=live_ai_max_suggestions,
                 progress_callback=show_model_progress,
@@ -627,58 +634,25 @@ def render_live_ai_optimizer_panel(
             else:
                 st.caption("Suggestions will appear after the model analyzes the current code.")
 
-    if st.button("Generate Optimal Code", key="generate_optimal_code_btn"):
-        with st.spinner("🤖 Autonomous Multi-Agent Pipeline running (Planner ➔ Optimizer ➔ Sandbox Judge ➔ Critic)..."):
-            orch = OrchestratorStateMachine(
-                code=user_code,
-                language=lang_code if "lang_code" in locals() else "cpp",
-                baseline_stdin=st.session_state.get("stdin_input", ""),
-                max_cycles=3,
-                provider_name=live_ai_provider,
-                gemini_model=gemini_optimal_model,
-                ollama_model=ollama_optimal_model,
-            )
-            agent_res = orch.run()
-            st.session_state.agentic_result = agent_res
-            changes_list = getattr(agent_res, "changes_summary", None) or [agent_res.verification_status]
-            st.session_state.complete_optimal_code = {
-                "code": agent_res.optimized_code,
-                "changes": "\n".join(f"• {c}" for c in changes_list),
-                "status": agent_res.verification_status,
-            }
-            st.rerun(scope="app")
-
-    if st.session_state.get("complete_optimal_code"):
-        with st.expander("✨ Complete Optimal Code", expanded=False):
-            block = st.session_state.complete_optimal_code
-            st.code(block["code"], language="cpp")
-            st.caption(block["status"])
-            st.write(block["changes"])
-            if st.button("Apply to editor", key="apply_complete_optimal_code"):
-                st.session_state.editor_code = block["code"]
-                st.session_state.editor_version += 1
-                log_interaction("apply_optimal_code", "Applied complete optimized program", user_code, "OPTIMIZATION")
-                st.rerun(scope="app")
-
-
-
 def analyze_code_structure_and_complexity(code: str, language: str, stdin_input: str = "", stdout: str = "") -> str:
     """Perform rigorous algorithmic analysis to extract execution steps, exact TC, and SC."""
     from complexity_engine import analyze_algorithmic_complexity
     report = analyze_algorithmic_complexity(code, language=language, stdin_input=stdin_input, stdout=stdout)
 
     steps_text = "\n".join(report.steps_walkthrough)
-    opts_text = "\n".join(f"- {opt}" for opt in report.optimizations) if report.optimizations else "- Program structure is clean."
+    optimization_section = (
+        "\n\n### 💡 Observations & Optimization Opportunities\n"
+        + "\n".join(f"- {opt}" for opt in report.optimizations)
+        if report.optimizations
+        else ""
+    )
 
     return f"""### 📖 Code Logic & Execution Walkthrough
 {steps_text}
 
 ### ⏱️ Algorithmic Complexity Analysis
 - **Time Complexity (TC):** `{report.time_complexity}` — {report.tc_derivation}
-- **Space Complexity (SC):** `{report.space_complexity}` — {report.sc_derivation}
-
-### 💡 Observations & Optimization Opportunities
-{opts_text}"""
+- **Space Complexity (SC):** `{report.space_complexity}` — {report.sc_derivation}{optimization_section}"""
 
 
 def generate_code_walkthrough_and_complexity(
@@ -700,6 +674,12 @@ def render_agentic_result_view(res, current_user_code: str, lang_name: str):
         return
     st.markdown("---")
     st.subheader("🛡️ Supervised Multi-Agent Optimization & Hardening Gate")
+    st.caption(
+        "Security and efficiency scores are heuristic signals, not proof of global optimality. "
+        "Generated tests are samples, not a proof. A patch is accepted only when reference runs complete, "
+        "captured output matches exactly, candidate sanitizer checks pass, and neither quality score nor "
+        "measured runtime regresses."
+    )
 
     # Metrics comparison
     sec_orig = getattr(res, "metrics_before", {}).get("security_score", getattr(res, "original_metrics", {}).get("security_score", 0))
@@ -723,7 +703,9 @@ def render_agentic_result_view(res, current_user_code: str, lang_name: str):
     with c3:
         st.metric("⏱️ Median Latency", f"{time_opt:.2f} ms", delta=f"{time_opt - time_orig:+.2f} ms" if time_orig > 0 else None, delta_color="inverse")
     with c4:
-        st.metric("🧪 Test Equivalence", f"{tests_ok}/{tests_eval} Passed" if tests_eval > 0 else "Verified", delta="100% Equivalence" if tests_ok == tests_eval else "Discrepancy")
+        test_status = f"{tests_ok}/{tests_eval} Passed" if tests_eval > 0 else "Not verified"
+        test_delta = "All generated cases passed" if tests_eval > 0 and tests_ok == tests_eval else "Not verified"
+        st.metric("🧪 Test Equivalence", test_status, delta=test_delta)
 
     # Visual Code Diff (Original vs Candidate)
     diff_text = getattr(res, "diff_unified", "")
@@ -769,50 +751,56 @@ def render_agentic_result_view(res, current_user_code: str, lang_name: str):
         else:
             st.caption("No state transitions recorded.")
 
-    # Human-in-the-Loop Gate: Explicit Approve vs Reject buttons
-    st.markdown("### 🚦 Human-in-the-Loop Gate")
-    st.info("ℹ️ No code changes are applied silently. Inspect the diff above and approve to update your editor.")
-    col_app, col_rej = st.columns([2, 1])
-    with col_app:
-        if st.button("✅ Approve & Apply Patch to Editor", type="primary", key="btn_approve_agentic_patch", use_container_width=True):
-            st.session_state.editor_code = res.optimized_code
-            st.session_state.editor_version = st.session_state.get("editor_version", 0) + 1
-            # Record success into MemoryStore
-            try:
-                record_experience(
-                    language=getattr(res, "language", "cpp"),
-                    flaws=";".join([f.get("message", "") for f in getattr(res, "evidence_report", {}).get("tool_findings", [])][:3]),
-                    flaw_summary="Supervised multi-agent patch approved by user",
-                    original_code=res.original_code,
-                    patch_code=res.optimized_code,
-                    success=True,
-                )
-            except Exception:
-                pass
-            st.session_state.agentic_result = None
-            st.success("Patch applied to editor! Click 'Compile and analyze' to execute.")
-            st.rerun(scope="app")
-    with col_rej:
-        if st.button("❌ Reject Patch", key="btn_reject_agentic_patch", use_container_width=True):
-            try:
-                record_experience(
-                    language=getattr(res, "language", "cpp"),
-                    flaws="rejected_by_user",
-                    flaw_summary="Patch rejected by human in the loop",
-                    original_code=res.original_code,
-                    patch_code=res.optimized_code,
-                    success=False,
-                )
-            except Exception:
-                pass
-            st.session_state.agentic_result = None
-            st.info("Patch discarded. Editor preserved intact.")
-            st.rerun(scope="app")
+    if not getattr(res, "success", False):
+        st.warning(
+            "No patch passed the verification gates. The editor was not changed; "
+            "review the agent trace for the reason."
+        )
+    else:
+        # Human-in-the-Loop Gate: Explicit Approve vs Reject buttons
+        st.markdown("### 🚦 Human-in-the-Loop Gate")
+        st.info("ℹ️ No code changes are applied silently. Inspect the diff above and approve to update your editor.")
+        col_app, col_rej = st.columns([2, 1])
+        with col_app:
+            if st.button("✅ Approve & Apply Patch to Editor", type="primary", key="btn_approve_agentic_patch", use_container_width=True):
+                st.session_state.editor_code = res.optimized_code
+                st.session_state.editor_version = st.session_state.get("editor_version", 0) + 1
+                # Record success into MemoryStore
+                try:
+                    record_experience(
+                        language=getattr(res, "language", "cpp"),
+                        flaws=";".join([f.get("message", "") for f in getattr(res, "evidence_report", {}).get("tool_findings", [])][:3]),
+                        flaw_summary="Supervised multi-agent patch approved by user",
+                        original_code=res.original_code,
+                        patch_code=res.optimized_code,
+                        success=True,
+                    )
+                except Exception:
+                    pass
+                st.session_state.agentic_result = None
+                st.success("Patch applied to editor! Click 'Compile and analyze' to execute.")
+                st.rerun(scope="app")
+        with col_rej:
+            if st.button("❌ Reject Patch", key="btn_reject_agentic_patch", use_container_width=True):
+                try:
+                    record_experience(
+                        language=getattr(res, "language", "cpp"),
+                        flaws="rejected_by_user",
+                        flaw_summary="Patch rejected by human in the loop",
+                        original_code=res.original_code,
+                        patch_code=res.optimized_code,
+                        success=False,
+                    )
+                except Exception:
+                    pass
+                st.session_state.agentic_result = None
+                st.info("Patch discarded. Editor preserved intact.")
+                st.rerun(scope="app")
 
 
 # --- DYNAMIC ACTIVE MODEL RESOLUTION ---
 def get_active_model_and_provider() -> tuple[str, str]:
-    """Resolve currently active running model and provider dynamically (100% local Ollama)."""
+    """Resolve the currently selected model and provider for the app header."""
     installed_ollama, _ = _ensure_ollama_running()
     default_ollama = installed_ollama[0] if installed_ollama else os.environ.get("LIVE_MODEL", "qwen2.5-coder:3b")
     served_mdl = st.session_state.get("last_served_model")
@@ -846,13 +834,17 @@ if "messages" not in st.session_state or len(st.session_state.messages) == 0:
 if "editor_version" not in st.session_state:
     st.session_state.editor_version = 0
 
-# Purge any stale session state from previous versions or cross-provider leaks
-for _stale_k in ("live_ai_model", "optimal_ai_model", "chat_ai_model", "live_ai_provider"):
+# Purge provider selections from earlier versions.
+for _stale_k in (
+    "live_ai_model",
+    "optimal_ai_model",
+    "chat_ai_model",
+    "live_ai_provider",
+):
     if _stale_k in st.session_state:
-        _val = str(st.session_state[_stale_k])
-        if "gemini" in _val:
-            del st.session_state[_stale_k]
+        del st.session_state[_stale_k]
 
+st.session_state["ai_provider_select"] = "ollama"
 st.session_state["live_ai_provider"] = "ollama"
 st.session_state["live_suggestions_active_provider"] = "ollama"
 
@@ -863,10 +855,154 @@ def reset_execution_state():
     st.session_state.last_exit_code = None
     st.session_state.last_execution_time = None
     st.session_state.last_timed_out = False
+    st.session_state.last_output_limited = False
     st.session_state.last_agent_log = None
     st.session_state.semantic_report = None
     st.session_state.semantic_corrected_code = None
     st.session_state.semantic_correction_note = None
+
+
+def _editor_file_extension(language: str) -> str:
+    return {
+        "C++": ".cpp",
+        "Python": ".py",
+        "JavaScript": ".js",
+        "TypeScript": ".ts",
+        "SQL": ".sql",
+    }.get(language, ".txt")
+
+
+def _save_active_editor_file() -> None:
+    files = st.session_state.get("editor_files", {})
+    active_file = st.session_state.get("active_editor_file")
+    if active_file in files:
+        files[active_file] = st.session_state.get("editor_code", "")
+
+
+def _reset_editor_file_context() -> None:
+    st.session_state.live_diagnostics = []
+    st.session_state.cached_compiler_diags = []
+    st.session_state.diag_last_code = None
+    st.session_state.diag_syntax_checked_code = None
+    st.session_state.analysis_cache = {}
+    st.session_state.live_suggestions_cache = []
+    st.session_state.live_suggestions_code = ""
+    st.session_state.live_suggestions_key = None
+    st.session_state.live_suggestions_analysis = None
+    reset_execution_state()
+
+
+def _validated_editor_file_name(raw_name: str, replacing_name: str | None = None) -> tuple[str | None, str | None]:
+    name = raw_name.strip().rstrip(".")
+    if (
+        not name
+        or name in {".", ".."}
+        or name.startswith(".")
+        or any(separator in name for separator in ("/", "\\", ":"))
+        or any(ord(character) < 32 for character in name)
+    ):
+        return None, "Enter a file name without a folder path."
+
+    if not os.path.splitext(name)[1]:
+        name += _editor_file_extension(st.session_state.get("current_language", "C++"))
+
+    files = st.session_state.get("editor_files", {})
+    duplicate = next(
+        (
+            existing_name
+            for existing_name in files
+            if existing_name.casefold() == name.casefold()
+            and existing_name != replacing_name
+        ),
+        None,
+    )
+    if duplicate:
+        return None, f"A file named {duplicate} already exists."
+    return name, None
+
+
+def _switch_editor_file() -> None:
+    _save_active_editor_file()
+    files = st.session_state.get("editor_files", {})
+    selected_file = st.session_state.get("editor_file_selector")
+    if selected_file not in files:
+        st.session_state.editor_file_message = "The selected file is no longer available."
+        return
+    st.session_state.active_editor_file = selected_file
+    st.session_state.editor_code = files[selected_file]
+    st.session_state.editor_version += 1
+    st.session_state.editor_file_message = ""
+    _reset_editor_file_context()
+
+
+def _create_editor_file() -> None:
+    _save_active_editor_file()
+    name, error = _validated_editor_file_name(
+        st.session_state.get("editor_file_name_input", "")
+    )
+    if error or name is None:
+        st.session_state.editor_file_message = error or "Enter a valid file name."
+        return
+
+    st.session_state.editor_files[name] = ""
+    st.session_state.active_editor_file = name
+    st.session_state.editor_file_selector = name
+    st.session_state.editor_code = ""
+    st.session_state.editor_version += 1
+    st.session_state.editor_file_name_input = ""
+    st.session_state.editor_file_message = ""
+    _reset_editor_file_context()
+
+
+def _rename_active_editor_file() -> None:
+    _save_active_editor_file()
+    old_name = st.session_state.get("active_editor_file")
+    if not isinstance(old_name, str) or old_name not in st.session_state.editor_files:
+        st.session_state.editor_file_message = "The selected file is no longer available."
+        return
+    name, error = _validated_editor_file_name(
+        st.session_state.get("editor_file_name_input", ""),
+        replacing_name=old_name,
+    )
+    if error or name is None:
+        st.session_state.editor_file_message = error or "Enter a valid file name."
+        return
+    if name == old_name:
+        st.session_state.editor_file_message = ""
+        return
+
+    files = st.session_state.editor_files
+    st.session_state.editor_files = {
+        name if existing_name == old_name else existing_name: content
+        for existing_name, content in files.items()
+    }
+    st.session_state.active_editor_file = name
+    st.session_state.editor_file_selector = name
+    st.session_state.editor_file_name_input = ""
+    st.session_state.editor_file_message = ""
+
+
+def _delete_active_editor_file() -> None:
+    _save_active_editor_file()
+    files = st.session_state.editor_files
+    active_file = st.session_state.active_editor_file
+    if active_file not in files:
+        st.session_state.editor_file_message = "The selected file is no longer available."
+        return
+    if len(files) <= 1:
+        st.session_state.editor_file_message = "Keep at least one file in the editor."
+        return
+
+    remaining_files = [name for name in files if name != active_file]
+    del files[active_file]
+    next_file = remaining_files[0]
+    st.session_state.active_editor_file = next_file
+    st.session_state.editor_file_selector = next_file
+    st.session_state.editor_code = files[next_file]
+    st.session_state.editor_version += 1
+    st.session_state.editor_file_message = ""
+    _reset_editor_file_context()
+
 
 if "last_status" not in st.session_state:
     reset_execution_state()
@@ -878,6 +1014,8 @@ if "last_execution_time" not in st.session_state:
     st.session_state.last_execution_time = None
 if "last_timed_out" not in st.session_state:
     st.session_state.last_timed_out = False
+if "last_output_limited" not in st.session_state:
+    st.session_state.last_output_limited = False
 if "last_agent_log" not in st.session_state:
     st.session_state.last_agent_log = None
 if "green_metrics" not in st.session_state:
@@ -916,9 +1054,6 @@ if "live_suggestions_message" not in st.session_state:
     st.session_state.live_suggestions_message = ""
 if "live_suggestions_analysis" not in st.session_state:
     st.session_state.live_suggestions_analysis = None
-if "complete_optimal_code" not in st.session_state:
-    st.session_state.complete_optimal_code = None
-
 if "current_language" not in st.session_state:
     st.session_state.current_language = "C++"
 
@@ -941,6 +1076,7 @@ def _apply_language_change(new_lang):
             st.session_state.editor_code = 'SELECT "Hello, world!" AS greeting;\n'
         else:
             st.session_state.editor_code = c_default
+    _save_active_editor_file()
     st.session_state.editor_version = st.session_state.get("editor_version", 0) + 1
     st.session_state.live_diagnostics = []
     st.session_state.cached_compiler_diags = []
@@ -1001,12 +1137,14 @@ st.sidebar.subheader("Live AI Suggestions")
 live_ai_enabled = st.sidebar.checkbox("Enable live AI suggestions", value=True, key="live_ai_enabled")
 live_ai_idle_delay = st.sidebar.slider("Idle delay (seconds)", min_value=1, max_value=5, value=1, step=1, key="live_ai_idle_delay")
 live_ai_max_suggestions = st.sidebar.slider("Max suggestions", min_value=1, max_value=5, value=3, key="live_ai_max_suggestions")
-_installed_ollama, _ = _ensure_ollama_running()
-_ollama_models = _installed_ollama if _installed_ollama else ["qwen2.5-coder:3b", "qwen2.5-coder:7b", "llama3:latest"]
 
 live_ai_provider = "ollama"
-
-# 100% Offline Local Engine Banner
+_installed_ollama, _ = _ensure_ollama_running()
+_ollama_models = _installed_ollama if _installed_ollama else [
+    "qwen2.5-coder:3b",
+    "qwen2.5-coder:7b",
+    "llama3:latest",
+]
 st.sidebar.markdown(
     """
     <div style="background: rgba(34, 197, 94, 0.12); border: 1px solid rgba(34, 197, 94, 0.35); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px;">
@@ -1014,30 +1152,43 @@ st.sidebar.markdown(
             <span>🟢</span> <span>100% Offline & Private AI (Ollama)</span>
         </div>
         <div style="font-size: 0.75rem; color: var(--muted); margin-top: 4px; line-height: 1.35;">
-            Zero API keys required. All compiler diagnostics, AI tutoring, and autonomous agents run entirely on your local machine.
+            Zero API keys required. Compiler diagnostics, AI tutoring, and optimization run on your local machine.
         </div>
     </div>
     """,
     unsafe_allow_html=True,
 )
-
-# Model Selectors for Local Ollama
-live_ai_model = st.sidebar.selectbox("Live suggestion model", options=_ollama_models, index=0, key="ollama_live_model_select")
-optimal_ai_model = st.sidebar.selectbox("Optimizer & agent model", options=_ollama_models, index=min(1, len(_ollama_models) - 1), key="ollama_optimal_model_select")
-chat_ai_model = st.sidebar.selectbox("Chatbot tutor model", options=_ollama_models, index=0, key="ollama_chat_model_select")
-
-gemini_live_model = live_ai_model
-gemini_optimal_model = optimal_ai_model
+live_ai_model = st.sidebar.selectbox(
+    "Live suggestion model",
+    options=_ollama_models,
+    index=0,
+    key="ollama_live_model_select",
+)
+optimal_ai_model = st.sidebar.selectbox(
+    "Optimizer & agent model",
+    options=_ollama_models,
+    index=min(1, len(_ollama_models) - 1),
+    key="ollama_optimal_model_select",
+)
+st.sidebar.caption(
+    "Choose any installed Ollama model here. To add one, run `ollama pull <model>` "
+    "in a terminal, then refresh this app. Code-tuned models are usually better at programming than general chat models."
+)
+chat_ai_model = st.sidebar.selectbox(
+    "Chatbot tutor model",
+    options=_ollama_models,
+    index=0,
+    key="ollama_chat_model_select",
+)
 ollama_live_model = live_ai_model
 ollama_optimal_model = optimal_ai_model
 
 # Synchronize currently active model state
-st.session_state["live_ai_provider"] = "ollama"
-st.session_state["live_suggestions_active_provider"] = "ollama"
+st.session_state["live_ai_provider"] = live_ai_provider
+st.session_state["live_suggestions_active_provider"] = live_ai_provider
 st.session_state["live_suggestions_active_model"] = live_ai_model
 st.session_state["last_served_model"] = live_ai_model
 st.session_state["last_served_provider"] = "ollama"
-
 ollama_status = get_ollama_model_status(live_ai_model)
 st.sidebar.markdown(
     f"<div style='display:flex; align-items:center; gap:8px; margin-top: 8px;'><span style='font-size:18px;'>{ollama_status['symbol']}</span><strong>{ollama_status['status']}</strong></div>",
@@ -1099,6 +1250,58 @@ int main() {
     if "editor_code" not in st.session_state:
         st.session_state.editor_code = default_code
 
+    if "editor_files" not in st.session_state:
+        initial_file = f"main{_editor_file_extension(selected_language)}"
+        st.session_state.editor_files = {initial_file: st.session_state.editor_code}
+        st.session_state.active_editor_file = initial_file
+        st.session_state.editor_file_selector = initial_file
+    elif not st.session_state.editor_files:
+        initial_file = f"main{_editor_file_extension(selected_language)}"
+        st.session_state.editor_files = {initial_file: st.session_state.editor_code}
+        st.session_state.active_editor_file = initial_file
+        st.session_state.editor_file_selector = initial_file
+
+    editor_files = st.session_state.editor_files
+    if st.session_state.get("active_editor_file") not in editor_files:
+        st.session_state.active_editor_file = next(iter(editor_files))
+    if st.session_state.get("editor_file_selector") not in editor_files:
+        st.session_state.editor_file_selector = st.session_state.active_editor_file
+
+    st.radio(
+        "Open file",
+        options=list(editor_files),
+        key="editor_file_selector",
+        horizontal=True,
+        label_visibility="collapsed",
+        on_change=_switch_editor_file,
+    )
+    with st.expander("Manage files"):
+        st.caption("Files are kept for this browser session. Compile and analyze runs the selected file only.")
+        st.text_input(
+            "File name",
+            key="editor_file_name_input",
+            placeholder=f"for example, helper{_editor_file_extension(selected_language)}",
+        )
+        file_action_columns = st.columns(3)
+        file_action_columns[0].button(
+            "Add file",
+            key="add_editor_file",
+            on_click=_create_editor_file,
+        )
+        file_action_columns[1].button(
+            "Rename active",
+            key="rename_editor_file",
+            on_click=_rename_active_editor_file,
+        )
+        file_action_columns[2].button(
+            "Delete active",
+            key="delete_editor_file",
+            on_click=_delete_active_editor_file,
+        )
+        st.caption(f"Selected: {st.session_state.active_editor_file}")
+        if st.session_state.get("editor_file_message"):
+            st.error(st.session_state.editor_file_message)
+
     @st.fragment
 
     def render_editor_and_diagnostics():
@@ -1119,6 +1322,7 @@ int main() {
         )
         current_user_code = editor_value if isinstance(editor_value, str) else st.session_state.editor_code
         st.session_state.editor_code = current_user_code
+        st.session_state.editor_files[st.session_state.active_editor_file] = current_user_code
         st.caption("⌨️ Type freely. Real-time diagnostics update locally without reloading the screen. Click **▷ Compile and analyze** to run.")
         st.html("""<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" onload="
         try {
@@ -1202,11 +1406,8 @@ int main() {
                 user_code=current_user_code,
                 live_ai_enabled=live_ai_enabled,
                 live_ai_provider=live_ai_provider,
-                gemini_live_model=gemini_live_model,
                 ollama_live_model=ollama_live_model,
                 live_ai_max_suggestions=live_ai_max_suggestions,
-                gemini_optimal_model=gemini_optimal_model,
-                ollama_optimal_model=ollama_optimal_model,
             )
 
         with t_stdin:
@@ -1283,13 +1484,18 @@ int main() {
                 st.session_state.last_exit_code = getattr(res, "exit_code", 0 if return_code == 0 else return_code)
                 st.session_state.last_execution_time = getattr(res, "execution_time", 0.0)
                 st.session_state.last_timed_out = getattr(res, "timed_out", False)
+                st.session_state.last_output_limited = getattr(res, "output_limited", False)
                 st.session_state.last_agent_log = None
             # 3. Process Results
             if return_code == 0:
                 # --- PATH A: SUCCESS ---
                 ui_theme.show_status(st, "success", "SUCCESS", "Execution Successful!", icon="✅")
-                st.markdown(ui_theme.code_label("Program output"), unsafe_allow_html=True)
-                st.code(stdout if (stdout and stdout.strip()) else "(no output)", language="text")
+                render_terminal_output(stdout, "Program output")
+                if getattr(res, "output_limited", False):
+                    st.caption(
+                        "Program completed. Only the first 256 KB of output is captured; "
+                        "expand the output preview to see the rest of the captured text."
+                    )
 
                 st.session_state.semantic_compiler_diagnostics = []
                 local_diags = get_cached_local_diagnostics(
@@ -1316,7 +1522,6 @@ int main() {
                                 profile=reasoning_profile,
                                 work_dir=app_dir,
                                 provider_name=live_ai_provider,
-                                gemini_model=gemini_live_model,
                                 ollama_model=ollama_live_model,
                                 language=lang_code,
                             )
@@ -1416,6 +1621,7 @@ int main() {
             elif return_code == -1:
                 # --- PATH D: TIMEOUT / EXECUTION ERROR ---
                 is_timeout = st.session_state.get("last_timed_out", False)
+                is_output_limited = st.session_state.get("last_output_limited", False)
                 timeout_msg = stderr or "Execution timed out. Your program may be waiting for more input or stuck in an infinite loop."
                 ui_theme.show_status(
                     st,
@@ -1424,9 +1630,15 @@ int main() {
                     timeout_msg,
                     icon="⏱️" if is_timeout else "❌",
                 )
-                initial_msg = f"**⏱️ Execution Alert**\n\n{timeout_msg}"
+                alert_title = "Execution timed out" if is_timeout else "Execution error"
+                initial_msg = f"**{alert_title}**\n\n{timeout_msg}"
                 st.session_state.messages.append({"role": "assistant", "content": initial_msg})
-                log_interaction("SYSTEM (Timeout/Error)", initial_msg, user_code, "Timeout")
+                log_interaction(
+                    "SYSTEM (Execution Stopped)",
+                    initial_msg,
+                    user_code,
+                    "Timeout" if is_timeout else "Execution Error",
+                )
                 stop_and_save_metrics(tracker, start_time)
                 st.rerun()
                 
@@ -1495,7 +1707,6 @@ int main() {
                                 profile=reasoning_profile,
                                 work_dir=app_dir,
                                 provider_name=live_ai_provider,
-                                gemini_model=gemini_live_model,
                                 ollama_model=ollama_live_model,
                                 language=lang_code,
                             )
@@ -1558,16 +1769,43 @@ int main() {
         
         if st.session_state.last_status == 0:
             ui_theme.show_status(st, "success", "SUCCESS", "Execution Successful!", icon="✅")
-            st.markdown(ui_theme.code_label("Program output"), unsafe_allow_html=True)
-            st.code(st.session_state.last_stdout if (st.session_state.last_stdout and st.session_state.last_stdout.strip()) else "(no output)", language="text")
+            render_terminal_output(st.session_state.last_stdout, "Program output")
+            if st.session_state.get("last_output_limited", False):
+                st.caption(
+                    "Program completed. Output capture is capped at 256 KB; "
+                    "the remainder was discarded to protect memory."
+                )
         elif st.session_state.last_status == 2:
             ui_theme.show_status(st, "error", "RUNTIME ERROR", "Runtime Error / Crash Detected!" if is_cpp else f"Runtime Exception in {selected_language}!", icon="⚠️")
             st.markdown(ui_theme.code_label("Runtime error output"), unsafe_allow_html=True)
             st.code(st.session_state.last_stderr, language="text")
-        elif st.session_state.get("last_timed_out", False) or st.session_state.last_status == -1:
-            ui_theme.show_status(st, "error", "TIMED OUT", "Execution Timed Out!", icon="⏱️")
-            st.markdown(ui_theme.code_label("Timeout details"), unsafe_allow_html=True)
-            st.code(st.session_state.last_stderr, language="text")
+        elif (
+            st.session_state.get("last_timed_out", False)
+            or st.session_state.last_status == -1
+        ):
+            timed_out = st.session_state.get("last_timed_out", False)
+            if timed_out:
+                status_label = "TIMED OUT"
+                status_message = "Execution timed out; partial output is shown below."
+                status_icon = "⏱️"
+            else:
+                status_label = "EXECUTION ERROR"
+                status_message = st.session_state.last_stderr or "The program could not be completed."
+                status_icon = "❌"
+            ui_theme.show_status(st, "error", status_label, status_message, icon=status_icon)
+            st.markdown(ui_theme.code_label("Program output preview"), unsafe_allow_html=True)
+            captured_output = st.session_state.last_stdout or (
+                "(No output was captured. For C++, flush output with std::endl or std::flush.)"
+            )
+            render_terminal_output(captured_output, "Program output")
+            if st.session_state.get("last_output_limited", False):
+                st.caption(
+                    "The app retained up to 256 KB of output. Excess output was discarded; "
+                    "this did not stop the program."
+                )
+            if timed_out:
+                st.markdown(ui_theme.code_label("Timeout details"), unsafe_allow_html=True)
+                st.code(st.session_state.last_stderr, language="text")
         else:
             ui_theme.show_status(st, "error", "COMPILATION FAILED" if is_cpp else "SYNTAX ERROR", "Compilation Failed!" if is_cpp else f"{selected_language} Syntax Error!", icon="❌")
             st.markdown(ui_theme.code_label("Compiler output" if is_cpp else "Error output"), unsafe_allow_html=True)
@@ -1609,7 +1847,7 @@ int main() {
             if not has_deductions:
                 st.markdown(
                     '<div style="padding: 0.6rem 0; font-size: 0.9rem; color: var(--accent);">'
-                    '🎯 <strong>100% Optimal Score:</strong> Zero security vulnerabilities and optimal algorithmic complexity. No deductions applied.'
+                    '🎯 <strong>No heuristic deductions:</strong> Configured static checks found no security or efficiency issues; this is not a proof of global optimality.'
                     '</div>',
                     unsafe_allow_html=True
                 )
@@ -1647,33 +1885,6 @@ int main() {
                     </div>
                     """
                     st.markdown(card_html, unsafe_allow_html=True)
-
-            # --- AUTONOMOUS AGENTIC OPTIMIZER & HARDENER TRIGGER ---
-            st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-            btn_opt_label = "🤖 Run Autonomous Multi-Agent Optimizer & Hardener (Reach 100%)" if has_deductions else "🤖 Run Multi-Agent Code Optimizer & Hardener"
-            if st.button(btn_opt_label, type="primary", key="btn_run_agentic_optimizer_breakdown", use_container_width=True):
-                with st.spinner("🤖 Autonomous Multi-Agent Pipeline running (Planner ➔ Optimizer ➔ Sandbox Judge ➔ Critic)..."):
-                    orch = OrchestratorStateMachine(
-                        code=user_code,
-                        language=lang_code,
-                        baseline_stdin=st.session_state.get("stdin_input", ""),
-                        max_cycles=3,
-                        provider_name=live_ai_provider,
-                        gemini_model=gemini_optimal_model,
-                        ollama_model=ollama_optimal_model,
-                    )
-                    agent_res = orch.run()
-                    st.session_state.agentic_result = agent_res
-                    changes_list = getattr(agent_res, "changes_summary", None) or [agent_res.verification_status]
-                    st.session_state.complete_optimal_code = {
-                        "code": agent_res.optimized_code,
-                        "changes": "\n".join(f"• {c}" for c in changes_list),
-                        "status": agent_res.verification_status,
-                    }
-                    st.rerun(scope="app")
-
-    if st.session_state.get("agentic_result"):
-        render_agentic_result_view(st.session_state.agentic_result, user_code, selected_language)
 
     if st.session_state.green_metrics:
         st.markdown("---")
@@ -1794,7 +2005,6 @@ with col2:
                 baseline_stdin=st.session_state.get("stdin_input", ""),
                 language=lang_code,
                 provider_name=live_ai_provider,
-                gemini_model=gemini_optimal_model,
                 ollama_model=ollama_optimal_model,
                 count=4,
             )
@@ -1815,54 +2025,47 @@ with col2:
             st.rerun(scope="app")
 
     if run_optimizer_pill:
-        with st.spinner("🤖 Autonomous Multi-Agent Pipeline verifying code across all agents..."):
-            orch = OrchestratorStateMachine(
-                code=user_code,
-                language=lang_code,
-                baseline_stdin=st.session_state.get("stdin_input", ""),
-                max_cycles=3,
-                provider_name=live_ai_provider,
-                gemini_model=gemini_optimal_model,
-                ollama_model=ollama_optimal_model,
-            )
-            agent_res = orch.run()
-            st.session_state.agentic_result = agent_res
-            changes_list = getattr(agent_res, "changes_summary", None) or [getattr(agent_res, "verification_status", "Code verified across all agents.")]
-            st.session_state.complete_optimal_code = {
-                "code": getattr(agent_res, "optimized_code", user_code),
-                "changes": "\n".join(f"• {c}" for c in changes_list),
-                "status": getattr(agent_res, "verification_status", "Verified"),
-            }
-
-            sec_before = getattr(agent_res, "metrics_before", {}).get("security_score", 0)
-            sec_after = getattr(agent_res, "metrics_after", {}).get("security_score", 0)
-            eff_before = getattr(agent_res, "metrics_before", {}).get("efficiency_score", 0)
-            eff_after = getattr(agent_res, "metrics_after", {}).get("efficiency_score", 0)
-            tests_passed = getattr(agent_res, "tests_passed", 0)
-            tests_eval = getattr(agent_res, "tests_evaluated", 0)
-
-            agent_reply = f"""### 🤖 Multi-Agent Verified Code Optimization
-
-**Agent Verification Status:** `{agent_res.verification_status}`
-- 🛡️ **Security Audit Agent:** `{sec_before:.0f}%` ➔ `{sec_after:.0f}%` ({sec_after - sec_before:+.0f}%)
-- ⚡ **Efficiency Profiler Agent:** `{eff_before:.0f}%` ➔ `{eff_after:.0f}%` ({eff_after - eff_before:+.0f}%)
-- 🧪 **Sandbox Judge Equivalence:** `{tests_passed}/{tests_eval}` edge-case tests passed with 100% equivalence
-
-**Applied Improvements:**
-{chr(10).join(f"- {c}" for c in changes_list)}
-
-*Review the unified diff below in the Human-in-the-Loop Gate and click **Approve & Apply Patch to Editor** to accept.*"""
-
-            st.session_state.messages.append({
-                "role": "user",
-                "content": "⚡ Run autonomous multi-agent optimization and hardening on this code.",
-            })
+        try:
+            with st.spinner(f"🤖 Asking {ollama_optimal_model} for optimized code..."):
+                optimized_code, summary, _ = generate_optimal_program(
+                    user_code,
+                    diagnostics=st.session_state.get("live_diagnostics", []),
+                    run_result={
+                        "stdin": st.session_state.get("stdin_input", ""),
+                        "stdout": st.session_state.get("last_stdout", ""),
+                        "stderr": st.session_state.get("last_stderr", ""),
+                        "exit_code": st.session_state.get("last_exit_code"),
+                    },
+                    provider_name=live_ai_provider,
+                    ollama_model=ollama_optimal_model,
+                    language=lang_code,
+                )
+        except Exception as exc:
             st.session_state.messages.append({
                 "role": "assistant",
-                "content": agent_reply,
-                "code_expander": agent_res.optimized_code,
+                "content": f"**Optimization request failed:** {exc}",
             })
+            st.error(f"Could not generate optimized code: {exc}")
             st.rerun(scope="app")
+
+        st.session_state.messages.append({
+            "role": "user",
+            "content": f"⚡ Optimize this {selected_language} code with {ollama_optimal_model}.",
+        })
+        assistant_message = {
+            "role": "assistant",
+            "content": (
+                f"### ✨ Model-Generated Optimization\n\n{summary}\n\n"
+                "Review the result before using it. The app did not compile or test this code."
+                if optimized_code
+                else f"### ⚠️ No code returned\n\n{summary}"
+            ),
+        }
+        if optimized_code:
+            assistant_message["code_expander"] = optimized_code
+            assistant_message["model_generated_code"] = True
+        st.session_state.messages.append(assistant_message)
+        st.rerun(scope="app")
 
     def safe_chat_markdown(raw_content: str) -> str:
         if not isinstance(raw_content, str):
@@ -1874,13 +2077,25 @@ with col2:
     # 2. CHAT MESSAGE STREAM
     chat_container = st.container(height=420)
     with chat_container:
-        for msg in st.session_state.messages:
+        for message_index, msg in enumerate(st.session_state.messages):
             with st.chat_message(msg["role"]):
                 st.markdown(safe_chat_markdown(msg.get("content", "")))
                 if "code_expander" in msg:
-                    with st.expander("✨ View Verified & Corrected Code", expanded=True):
-                        st.markdown(ui_theme.code_label(f"Verified {selected_language}"), unsafe_allow_html=True)
+                    model_generated = msg.get("model_generated_code", False)
+                    code_label = "Model-Generated Code" if model_generated else f"Verified {selected_language}"
+                    expander_label = "✨ View Model-Generated Code" if model_generated else "✨ View Verified & Corrected Code"
+                    with st.expander(expander_label, expanded=True):
+                        st.markdown(ui_theme.code_label(code_label), unsafe_allow_html=True)
                         st.code(msg["code_expander"], language=active_ace_mode)
+                        if model_generated:
+                            st.caption("Not compiled or verified. Review before running.")
+                            if st.button("Apply code to editor", key=f"apply_model_code_{message_index}"):
+                                st.session_state.editor_code = msg["code_expander"]
+                                active_file = st.session_state.get("active_editor_file")
+                                if active_file in st.session_state.get("editor_files", {}):
+                                    st.session_state.editor_files[active_file] = msg["code_expander"]
+                                st.session_state.editor_version = st.session_state.get("editor_version", 0) + 1
+                                st.rerun(scope="app")
 
     # 3. STICKY CHAT INPUT
     follow_up = st.chat_input("Ask a follow-up question")

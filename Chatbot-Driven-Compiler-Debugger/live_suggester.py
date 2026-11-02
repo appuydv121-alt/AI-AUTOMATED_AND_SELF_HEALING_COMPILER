@@ -257,7 +257,6 @@ def _extract_ai_suggestions(
     diagnostics: list[dict[str, Any]] | None = None,
     max_items: int = 5,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
-    gemini_model: str | None = None,
     ollama_model: str | None = None,
 ) -> tuple[list[dict[str, Any]], str, str]:
     """Returns (validated_suggestions, active_provider, active_model)."""
@@ -285,7 +284,6 @@ def _extract_ai_suggestions(
             prompt,
             provider_name=provider_name,
             model=model,
-            gemini_model=gemini_model,
             ollama_model=ollama_model,
             progress_callback=progress_callback,
         )
@@ -293,7 +291,7 @@ def _extract_ai_suggestions(
         _report_progress(progress_callback, {"stage": "error", "message": str(error)})
         return [], "", ""
 
-    # Result may be a parsed dict (Gemini structured output) or raw string (Ollama)
+    # Ollama may return either parsed JSON or raw text depending on the task.
     if isinstance(result, dict):
         response_payload = result
         raw_response = json.dumps(result, ensure_ascii=False)
@@ -376,101 +374,78 @@ def generate_optimal_program(
     run_result: dict[str, Any] | None = None,
     provider_name: str = "ollama",
     model: str | None = None,
-    gemini_model: str | None = None,
     ollama_model: str | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
     language: str = "cpp",
     deductions: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str, str]:
-    """Generate and verify an optimised version of *code* using autonomous multi-agent pipeline."""
+    """Ask the selected model once for an optimized program without running verification."""
+    language_tags = {
+        "c++": ("cpp", "c++"),
+        "cpp": ("cpp", "c++"),
+        "c": ("c",),
+        "python": ("python", "py"),
+        "javascript": ("javascript", "js"),
+        "typescript": ("typescript", "ts"),
+        "sql": ("sql",),
+    }
+    tags = language_tags.get(language.lower(), (language.lower(),))
+    fence_tags = "|".join(re.escape(tag) for tag in tags)
+    prompt = "\n".join([
+        f"You are an expert {language} performance engineer.",
+        f"Optimize the program below and return ONE complete {language} program in a single ```{tags[0]} code block.",
+        "Do not include explanations outside the code block.",
+        "Preserve the program's observable behavior, input/output format, and edge cases.",
+        "Look for better algorithms, avoided repeated work, and valid closed-form reductions of fixed-bound arithmetic loops. "
+        "Prioritize these meaningful improvements over formatting or cosmetic edits; do not add I/O boilerplate without profiling evidence.",
+        "Do not claim an optimization you did not make. If no meaningful safe improvement exists, return the original program.",
+        "SOURCE PROGRAM:",
+        code,
+    ])
+    if diagnostics:
+        prompt += "\n\nCompiler diagnostics:\n" + json.dumps(diagnostics, ensure_ascii=False)
+    if run_result:
+        prompt += "\n\nLatest run result:\n" + json.dumps(run_result, ensure_ascii=False)
+    if deductions:
+        prompt += "\n\nPotential optimization findings:\n" + json.dumps(deductions, ensure_ascii=False)
+
+    def report(event: dict[str, Any]) -> None:
+        _report_progress(progress_callback, event)
+
+    report({"stage": "requesting", "attempt": 1})
     try:
-        from orchestrator import OrchestratorStateMachine
-        orch = OrchestratorStateMachine(
-            code=code,
-            language=language,
-            baseline_stdin=(run_result or {}).get("stdin", ""),
-            max_cycles=3,
+        result, active_provider, active_model = _llm.generate_task(
+            "optimal_code",
+            prompt,
             provider_name=provider_name,
-            gemini_model=gemini_model,
+            model=model,
             ollama_model=ollama_model,
-            progress_callback=progress_callback,
+            language=language,
+            progress_callback=report,
         )
-        agent_res = orch.run()
-        changes_list = getattr(agent_res, "changes_summary", None) or [getattr(agent_res, "verification_status", "Code successfully optimized and verified.")]
-        changes = "\n".join(f"• {c}" for c in changes_list)
-        return agent_res.optimized_code, changes, getattr(agent_res, "verification_status", "Verified")
     except Exception as exc:
-        pass
-    """Generate and verify an optimised version of *code*.
+        report({"stage": "error", "attempt": 1, "message": str(exc)})
+        raise
 
-    Returns (optimized_code, change_description, verification_status).
-    """
-    _active_provider: list[str] = [provider_name or "ollama"]
-    _active_model:    list[str] = [model or ""]
-
-    def build_prompt(candidate: str) -> str:
-        parts = [
-            "You are a careful C++ optimization assistant.",
-            "Return ONE complete C++ program only inside a single ```cpp block.",
-            "Do not include extra prose before or after the block.",
-            "Keep behavior equivalent unless there is a clear correctness issue.",
-            "Infer the program's goal, prioritize algorithmic improvements before local cleanup.",
-            "Preserve edge-case behavior and remove security risks.",
-            "Do not make include-only or formatting-only changes.",
-            "Original code:",
-            code,
-            "\nCurrent candidate:",
-            candidate,
-        ]
-        if diagnostics:
-            parts.append("Diagnostics: " + json.dumps(diagnostics, ensure_ascii=False))
-        if run_result:
-            parts.append("Runtime result: " + json.dumps(run_result, ensure_ascii=False))
-        return "\n".join(parts)
-
-    attempt_number = 0
-
-    def generate_candidate(candidate: str) -> str:
-        nonlocal attempt_number
-        attempt_number += 1
-        _report_progress(progress_callback, {"stage": "requesting", "attempt": attempt_number})
-
-        def cb(event: dict[str, Any]) -> None:
-            _report_progress(progress_callback, {**event, "attempt": attempt_number})
-
-        try:
-            result, ap, am = _llm.generate_task(
-                "optimal_code",
-                build_prompt(candidate),
-                provider_name=provider_name,
-                model=model,
-                gemini_model=gemini_model,
-                ollama_model=ollama_model,
-                progress_callback=cb,
-            )
-            _active_provider[0] = ap
-            _active_model[0]    = am
-            # result is raw string (code block expected)
-            return result if isinstance(result, str) else json.dumps(result)
-        except Exception as error:
-            _report_progress(progress_callback, {"stage": "error", "attempt": attempt_number, "message": str(error)})
-            return ""
-
-    success, optimized_code, attempts = run_self_refine_loop(generate_candidate, code, max_attempts=3)
-    if success and optimized_code:
-        safe, _ = run_security_guardrail(optimized_code)
-        if not safe:
-            return code, "AI optimization was rejected because the generated code failed the security scan.", "Rejected"
-        _report_progress(progress_callback, {"stage": "complete", "attempts": attempts})
-        ap = _active_provider[0]
-        am = _active_model[0]
-        return optimized_code, f"Verified after {attempts} pass(es) via {ap} ({am}).", "Verified"
-
+    raw_response = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
+    fenced_blocks = re.findall(
+        rf"```(?:{fence_tags})\s*([\s\S]*?)```",
+        raw_response,
+        re.IGNORECASE,
+    )
+    if not fenced_blocks:
+        fenced_blocks = re.findall(r"```[\w+#.-]*\s*([\s\S]*?)```", raw_response)
+    optimized_code = max(fenced_blocks, key=len).strip() if fenced_blocks else raw_response.strip()
     if not optimized_code:
-        _report_progress(progress_callback, {"stage": "error", "message": "No valid C++ program was returned."})
-        return code, "AI optimization timed out or did not return a valid C++ program.", "Unavailable"
-    _report_progress(progress_callback, {"stage": "needs_review", "attempts": attempts})
-    return optimized_code, f"Generated after {attempts} pass(es), but not fully verified.", "Needs review"
+        report({"stage": "error", "attempt": 1, "message": "The model returned an empty response."})
+        return "", "The model returned no code.", "Unavailable"
+
+    report({"stage": "complete", "attempts": 1})
+    return (
+        optimized_code,
+        f"Generated directly by {active_provider} ({active_model}); it has not been compiled or verified.",
+        "Generated (not verified)",
+    )
 
 
 def render_live_suggestions(
@@ -479,7 +454,6 @@ def render_live_suggestions(
     diagnostics: list[dict[str, Any]] | None = None,
     provider_name: str = "ollama",
     model: str | None = None,
-    gemini_model: str | None = None,
     ollama_model: str | None = None,
     max_items: int = 5,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
@@ -496,7 +470,6 @@ def render_live_suggestions(
             diagnostics=diagnostics,
             max_items=max_items,
             progress_callback=progress_callback,
-            gemini_model=gemini_model,
             ollama_model=ollama_model,
         )
     except Exception as error:

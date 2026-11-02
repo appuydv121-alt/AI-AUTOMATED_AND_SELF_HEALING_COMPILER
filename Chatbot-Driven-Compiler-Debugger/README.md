@@ -6,7 +6,7 @@ Our architecture functions as a secure wrapper around the standard GCC compiler.
 * **Frontend:** Streamlit-based web UI.
 * **Execution Sandbox:** Python subprocess layer with strict timeout constraints.
 * **Diagnostic Engine:** Heuristic classification module for raw GCC errors.
-* **AI Core:** Localized Llama 3 Large Language Model (LLM).
+* **AI Core:** Local Ollama models. Optimization and tutoring do not require external API keys.
 * **Security Pipeline:** Bi-directional validation system (Pre-scan and Post-scan).
 
 ## Methodology / Pipeline
@@ -15,6 +15,12 @@ Our architecture functions as a secure wrapper around the standard GCC compiler.
 3. **Classification:** Intercepts compiler errors and classifies them using a rule-based engine.
 4. **AI Generation:** LLM receives a constrained prompt to generate a pedagogical fix.
 5. **Post-Scan Audit:** Validates the LLM's suggested code before presenting it to the user.
+
+## Program execution limits
+
+Programs have a 5-second execution timeout. Output capture is capped at 256 KB to limit memory use, but reaching that cap does not stop a program; excess output is drained and discarded while the process continues. The terminal shows an initial preview and lets users expand the rest of the captured output. A program that exceeds the execution timeout is stopped and its partial output is shown.
+
+The multi-agent optimizer treats generated tests as samples, not a proof of correctness. A candidate is rejected when the reference program fails or times out, output capture is incomplete, exact standard output differs, a sanitizer reports a critical issue, either heuristic security/efficiency score regresses, or measured runtime regresses materially. Therefore it reports "Needs Review" when equivalence cannot be established; 100% heuristic scores are not a guarantee of global optimality.
 
 ## Evidence-Grounded C++ Reasoning Pipeline
 
@@ -46,6 +52,14 @@ The application features an evidence-grounded analysis engine (`reasoning/`) ope
   - `thorough`: Includes optimization passes and in-depth performance analysis.
 - **Graceful Degradation:** If Ollama is offline or any LLM stage times out, the deterministic compiler facts and local static diagnostics continue to display in the UI without interruption.
 
+### Ollama optimization
+
+The app routes AI requests through local Ollama. Copy `.env.example` to `.env` to configure the Ollama endpoint and models. **Optimize** sends the current program directly to the selected model once and displays its returned code; it does not run agent verification, compilation, tests, or performance checks before showing the result. Review generated code before applying or running it. The optimizer model selector lists installed Ollama models; pull another model with `ollama pull <model>` and refresh the app to select it. Code-tuned models are generally preferable for programming tasks, while results depend on model size and available hardware. Full-program generation defaults to 4096 output tokens; adjust `OLLAMA_CODEGEN_MAX_TOKENS` and `OLLAMA_NUM_CTX` for larger programs, subject to your machine's available memory.
+
+### Deploying on Streamlit Community Cloud
+
+Select `Chatbot-Driven-Compiler-Debugger/app.py` as the app entrypoint. The repository-level `packages.txt` installs the native compilers used by the execution features. A cloud deployment cannot connect to Ollama running on your own computer; AI features require an Ollama server reachable from the deployment and an `OLLAMA_HOST` configuration. Do not expose a local Ollama server directly to the public internet.
+
 ## Semantic Name/Type Diagnostics
 
 The live diagnostics and **Compile & Analyze** results include an optional deterministic check for likely variable-name/data-type mismatches. It uses a lightweight C++ tokenizer/declaration extractor and the versioned `semantic_dictionary.json`; it adds no parser dependency and never executes submitted code. Unknown and ambiguous names are kept quiet or shown at low confidence, and semantic findings never block compilation.
@@ -56,3 +70,6 @@ In the Streamlit sidebar, semantic analysis can be disabled and the minimum conf
 
 Light and dark native widget palettes are configured in `.streamlit/config.toml` and can be switched from Streamlit's built-in menu. Shared surface, diagnostic, focus, and responsive tokens live in `assets/app.css`; `ui_theme.py` injects them and synchronizes the existing Ace editor theme without changing its content.
 
+## Editor files
+
+The editor supports multiple session-only files. Use the file tabs to switch between files, and **Manage files** to add, rename, or delete the active file. New files use the selected language's extension when no extension is provided. **Compile and analyze** runs only the currently selected file; files are not saved to a project folder.

@@ -1,7 +1,7 @@
 """LLM client for the reasoning pipeline.
 
-Routes every call through ``llm_provider.generate_task()`` so the sidebar
-provider / model selection (Gemini primary, Ollama fallback) is respected.
+Routes every call through ``llm_provider.generate_task()`` to the selected local
+Ollama model.
 
 Public API (unchanged):
     LLMClient          - abstract interface used by all pipeline stages
@@ -19,20 +19,17 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 # -- Provider injection (set by app.py before each run) ----------------------
-_active_provider_name: str = "gemini"
-_active_gemini_model: str | None = None
+_active_provider_name: str = "ollama"
 _active_ollama_model: str | None = None
 
 
 def set_provider(
     provider_name: str,
-    gemini_model: str | None = None,
     ollama_model: str | None = None,
 ) -> None:
     """Called by app.py (or tests) to set the sidebar provider for the next run."""
-    global _active_provider_name, _active_gemini_model, _active_ollama_model
-    _active_provider_name = provider_name or "gemini"
-    _active_gemini_model  = gemini_model or None
+    global _active_provider_name, _active_ollama_model
+    _active_provider_name = provider_name or "ollama"
     _active_ollama_model  = ollama_model or None
 
 
@@ -54,14 +51,9 @@ class LLMClient:
         """Lightweight probe. Returns (True, '') to avoid blocking the pipeline."""
         try:
             import llm_provider as _llm
-            if _active_provider_name == "gemini" and _llm._gemini_available():
-                return True, ""
-            if _active_provider_name == "ollama":
-                ok, err = _llm._ollama_model_available(
-                    _active_ollama_model or os.environ.get("CODEGEN_MODEL", "qwen2.5-coder:7b")
-                )
-                return ok, err
-            return True, ""
+            return _llm._ollama_model_available(
+                _active_ollama_model or os.environ.get("CODEGEN_MODEL", "qwen2.5-coder:7b")
+            )
         except Exception as exc:
             logger.debug("is_model_available check failed: %s", exc)
             return True, ""
@@ -83,7 +75,6 @@ class LLMClient:
                 "reasoning",
                 prompt,
                 provider_name=_active_provider_name,
-                gemini_model=_active_gemini_model,
                 ollama_model=_active_ollama_model,
             )
             if isinstance(result, dict):

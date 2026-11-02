@@ -6,13 +6,11 @@ Run from the project root:
     python test_providers.py
 
 Prerequisites:
-    - Set GEMINI_API_KEY in .env or as an env var to test Gemini.
-    - Ensure Ollama is running for Ollama tests.
+    - Ensure Ollama is running with the selected models pulled.
     - pip install -r requirements.txt
 """
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -40,25 +38,6 @@ _FAIL = "\033[31mFAIL\033[0m"
 def _result_line(label: str, ok: bool, detail: str) -> str:
     status = _PASS if ok else _FAIL
     return f"  [{status}]  {label:<40}  {detail}"
-
-
-def test_gemini() -> None:
-    print("\n-- Gemini --------------------------------------------------------")
-    api_key = _llm._GEMINI_API_KEY()
-    gemini_model = _llm._env("GEMINI_MODEL", "gemini-3.1-flash-lite")
-    if not api_key:
-        print(_result_line(f"gemini/{gemini_model}", False, "GEMINI_API_KEY not set in .env"))
-        return
-    try:
-        result, prov, mdl = _llm.generate_task("default", _TINY_PROMPT, provider_name="gemini")
-        if isinstance(result, dict) and result.get("ok") is True:
-            print(_result_line(f"gemini/{gemini_model}", True, f"Responded OK via {prov}/{mdl}"))
-        elif isinstance(result, str) and "ok" in result:
-            print(_result_line(f"gemini/{gemini_model}", True, f"Responded (string) via {prov}/{mdl}"))
-        else:
-            print(_result_line(f"gemini/{gemini_model}", False, f"Unexpected result: {str(result)[:80]}"))
-    except Exception as exc:
-        print(_result_line(f"gemini/{gemini_model}", False, str(exc)[:120]))
 
 
 def _test_ollama_model(model: str, task: str = "default") -> None:
@@ -98,49 +77,16 @@ def test_ollama_model_not_found() -> None:
                            f"Expected pull hint, got: available={available} err={err!r}"))
 
 
-def test_fallback_combined_error() -> None:
-    """If both providers fail, the error message must contain both failure reasons."""
-    print("\n-- Fallback combined-error message -------------------------------")
-    old_key = os.environ.get("GEMINI_API_KEY", "")
-    os.environ["GEMINI_API_KEY"] = "fake-key-for-test"
-    _llm._ENV_LOADED = False  # force re-read
-
-    fake_model = "definitely-not-a-real-model:999b"
-    try:
-        _llm.generate_task("default", _TINY_PROMPT, provider_name="gemini", model=fake_model)
-        print(_result_line("combined-error message", False, "No exception raised — expected one"))
-    except RuntimeError as exc:
-        msg = str(exc)
-        has_gemini = "Gemini" in msg or "gemini" in msg.lower()
-        has_ollama = "Ollama" in msg or "ollama" in msg.lower()
-        if has_gemini and has_ollama:
-            print(_result_line("combined-error message", True, msg[:100]))
-        else:
-            print(_result_line("combined-error message", False,
-                               f"Missing Gemini or Ollama in error: {msg[:100]}"))
-    finally:
-        # Restore
-        if old_key:
-            os.environ["GEMINI_API_KEY"] = old_key
-        else:
-            os.environ.pop("GEMINI_API_KEY", None)
-        _llm._ENV_LOADED = False
-
-
 def main() -> None:
     print("=" * 70)
     print("  Provider connectivity test")
     print("=" * 70)
-    print(f"  GEMINI_MODEL : {_llm._env('GEMINI_MODEL', 'gemini-3.1-flash-lite')}")
     print(f"  LIVE_MODEL   : {_llm._env('LIVE_MODEL', 'qwen2.5-coder:3b')}")
     print(f"  CODEGEN_MODEL: {_llm._env('CODEGEN_MODEL', 'qwen2.5-coder:7b')}")
     print(f"  OLLAMA_HOST  : {_llm._env('OLLAMA_HOST', 'http://localhost:11434')}")
-    print(f"  GEMINI_KEY   : {'set' if _llm._GEMINI_API_KEY() else 'not set'}")
 
-    test_gemini()
     test_ollama()
     test_ollama_model_not_found()
-    test_fallback_combined_error()
 
     print("\n" + "=" * 70)
     print("  Done. See OK/FAIL above.")
@@ -149,5 +95,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 

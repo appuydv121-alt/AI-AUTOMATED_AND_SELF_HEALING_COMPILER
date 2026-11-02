@@ -18,6 +18,7 @@ class TestCompilerServiceStdin(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         self.assertAlmostEqual(result.execution_time, 0.05)
         self.assertFalse(result.timed_out)
+        self.assertFalse(result.output_limited)
 
     def test_two_sum_sample_with_stdin(self):
         code = """#include <iostream>
@@ -80,6 +81,35 @@ int main() {
         self.assertEqual(res.status_code, -1)
         self.assertTrue(res.timed_out)
         self.assertIn("Execution timed out. Your program may be waiting for more input or stuck in an infinite loop.", res.stderr)
+
+    def test_timeout_preserves_output_written_before_timeout(self):
+        code = """#include <iostream>
+int main() {
+    for (int i = 0; i < 10; ++i) {
+        std::cout << i << std::endl;
+    }
+    while (true) {}
+}"""
+        res = compile_and_run(code, timeout_run=0.2)
+        self.assertEqual(res.status_code, -1)
+        self.assertTrue(res.timed_out)
+        self.assertIn("0", res.stdout)
+        self.assertIn("9", res.stdout)
+
+    def test_large_output_is_capped_without_stopping_program(self):
+        code = """#include <iostream>
+#include <string>
+int main() {
+    std::cout << std::string(4096, 'x');
+    return 0;
+}"""
+        res = compile_and_run(code, timeout_run=5, max_output_bytes=1024)
+        self.assertEqual(res.status_code, 0)
+        self.assertFalse(res.timed_out)
+        self.assertTrue(res.output_limited)
+        self.assertEqual(res.exit_code, 0)
+        self.assertLessEqual(len(res.stdout.encode("utf-8")), 1024)
+        self.assertIn("output beyond this amount was discarded", res.stderr)
 
     def test_non_zero_exit_code(self):
         code = """int main() {

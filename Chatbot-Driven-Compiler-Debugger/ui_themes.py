@@ -945,7 +945,6 @@ def setup_ui(model_name: str | None = None, provider: str | None = None) -> dict
         model_name = (
             st.session_state.get("last_served_model")
             or st.session_state.get("ollama_live_model_select")
-            or st.session_state.get("gemini_live_model_select")
             or os.environ.get("LIVE_MODEL", "qwen2.5-coder:3b")
         )
 
