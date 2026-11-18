@@ -8,50 +8,68 @@ Goals:
   3. Clean pixel-faithful reproduction of modern IDE cards without clutter.
 """
 
-import os
-import re
 import streamlit as st
-import streamlit.components.v1 as components
 
 THEMES = {
-    # Clean modern light theme: crisp slate background, cobalt electric accent, rich contrast
-    "Daylight": dict(
-        scheme="light", editor="xcode",
-        bg="#F8FAFC", surface="#FFFFFF", surface2="#F1F5F9", border="#E2E8F0",
-        text="#0F172A", muted="#64748B",
-        accent="#2563EB", on_accent="#FFFFFF", accent2="#4F46E5",
-        ok="#059669", ok_bg="#ECFDF5",
-        warn="#D97706", warn_bg="#FFFBEB",
-        err="#DC2626", err_bg="#FEF2F2",
-        code_bg="#F8FAFC",
-        shadow="0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 4px 12px -2px rgba(0, 0, 0, 0.05)",
+    # Studio Light: World-class Apple / Stripe / Linear high-contrast light IDE theme.
+    "Studio Light": dict(
+        scheme="light", editor="chrome",
+        bg="#F1F5F9",              # Slate-100 canvas (provides instant high card boundary contrast!)
+        surface="#FFFFFF",         # Pure crisp white cards
+        surface2="#F8FAFC",        # Smooth slate-50 wells & secondary cards
+        border="#CBD5E1",          # Defined slate-300 boundary border
+        text="#0F172A",            # Deep slate-900 high contrast text
+        muted="#64748B",           # Slate-500 secondary text
+        accent="#2563EB",          # Electric Royal Blue
+        on_accent="#FFFFFF",       # Pure white
+        accent2="#3B82F6",         # Smooth bright blue gradient partner
+        ok="#059669",              # Emerald 600
+        ok_bg="#ECFDF5",           # Emerald 50 soft tint
+        warn="#D97706",            # Amber 600
+        warn_bg="#FFFBEB",         # Amber 50 soft tint
+        err="#DC2626",             # Red 600
+        err_bg="#FEF2F2",          # Rose 50 soft tint
+        code_bg="#FFFFFF",         # Pure white editor surface
+        shadow="0 10px 25px -3px rgba(15, 23, 42, 0.12), 0 4px 8px -2px rgba(15, 23, 42, 0.08), 0 0 0 1.5px rgba(15, 23, 42, 0.06)",
     ),
-    # Dark green-slate theme: editor feel, mint accent with amber highlights.
-    "Forest Dev": dict(
-        scheme="dark", editor="nord_dark",
-        bg="#0F1714", surface="#16211C", surface2="#1E2D26", border="#2C4036",
-        text="#E4EEE8", muted="#93A89D",
-        accent="#3DDC97", on_accent="#06150E", accent2="#F5B84B",
-        ok="#3DDC97", ok_bg="rgba(61, 220, 151, 0.08)",
-        warn="#F5B84B", warn_bg="rgba(245, 184, 75, 0.1)",
-        err="#FF7A7A", err_bg="rgba(255, 122, 122, 0.1)",
-        code_bg="#111B16",
-        shadow="none",
-    ),
-    # Dark blue-ink theme: soft periwinkle accent, easy on the eyes at night.
-    "Midnight": dict(
+    # Flagship Dark theme: Sleek obsidian slate, vibrant cyan accent, seamless editor.
+    "Cyber Slate": dict(
         scheme="dark", editor="tomorrow_night",
-        bg="#0B0F19", surface="#121826", surface2="#1A2338", border="#24324F",
-        text="#E7ECF7", muted="#8D9BB5",
-        accent="#60A5FA", on_accent="#08101E", accent2="#5EEAD4",
-        ok="#4ADE80", ok_bg="rgba(74, 222, 128, 0.08)",
-        warn="#FBBF24", warn_bg="rgba(251, 191, 36, 0.1)",
-        err="#FF8A8A", err_bg="rgba(255, 138, 138, 0.1)",
-        code_bg="#101728",
-        shadow="none",
+        bg="#0B0F17", surface="#111827", surface2="#1E293B", border="#243047",
+        text="#F8FAFC", muted="#94A3B8",
+        accent="#38BDF8", on_accent="#0B0F17", accent2="#818CF8",
+        ok="#10B981", ok_bg="rgba(16, 185, 129, 0.12)",
+        warn="#F59E0B", warn_bg="rgba(245, 158, 11, 0.12)",
+        err="#EF4444", err_bg="rgba(239, 68, 68, 0.12)",
+        code_bg="#0F172A",
+        shadow="0 8px 24px rgba(0, 0, 0, 0.28)",
+    ),
+    # Tokyo Night: Ultra-popular developer theme with purple/electric blue tones.
+    "Tokyo Night": dict(
+        scheme="dark", editor="twilight",
+        bg="#1A1B26", surface="#24283B", surface2="#2F3549", border="#414868",
+        text="#C0CAF5", muted="#7AA2F7",
+        accent="#7AA2F7", on_accent="#1A1B26", accent2="#BB9AF7",
+        ok="#9ECE6A", ok_bg="rgba(158, 206, 106, 0.12)",
+        warn="#E0AF68", warn_bg="rgba(224, 175, 104, 0.12)",
+        err="#F7768E", err_bg="rgba(247, 118, 142, 0.12)",
+        code_bg="#1F2335",
+        shadow="0 8px 24px rgba(0, 0, 0, 0.35)",
+    ),
+    # One Dark Pro: Atom / VS Code iconic palette.
+    "One Dark Pro": dict(
+        scheme="dark", editor="tomorrow_night",
+        bg="#1E1E24", surface="#282C34", surface2="#353B45", border="#3E4451",
+        text="#ABB2BF", muted="#828997",
+        accent="#61AFEF", on_accent="#1E1E24", accent2="#C678DD",
+        ok="#98C379", ok_bg="rgba(152, 195, 121, 0.12)",
+        warn="#E5C07B", warn_bg="rgba(229, 192, 123, 0.12)",
+        err="#E06C75", err_bg="rgba(224, 108, 117, 0.12)",
+        code_bg="#21252B",
+        shadow="0 8px 24px rgba(0, 0, 0, 0.3)",
     ),
 }
-DEFAULT_THEME = "Daylight"
+DEFAULT_THEME = "Studio Light"
 
 _BASE_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
@@ -61,298 +79,264 @@ html, body, .stApp { background: var(--bg) !important; color: var(--text); }
 .stApp [data-testid="stMarkdownContainer"] { font-family: 'Manrope', system-ui, sans-serif; color: var(--text); }
 .stApp small, .stApp [data-testid="stCaptionContainer"] { color: var(--muted) !important; }
 
-/* ---------- Header chrome, deploy button (hide junk, keep sidebar) ---------- */
-header[data-testid="stHeader"] { display: none !important; }
+/* ---------- Header chrome, deploy button (hide junk, keep sidebar toggle accessible) ---------- */
+header[data-testid="stHeader"] {
+    background: transparent !important;
+    height: 48px !important;
+    z-index: 99999 !important;
+    pointer-events: none !important;
+}
+header[data-testid="stHeader"] * {
+    pointer-events: auto !important;
+}
 [data-testid="stAppDeployButton"], .stDeployButton, footer, #MainMenu { display: none !important; }
 [data-testid="stDecoration"] { display: none !important; }
-.block-container { padding: 0.75rem 1.2rem 0 1.2rem !important; max-width: 100% !important; }
-[data-testid="stAppViewContainer"] > .main, section.main { overflow: hidden; }
+.block-container {
+    padding: 0.75rem 1.2rem 0 1.2rem !important;
+    max-width: 100% !important;
+    width: 100% !important;
+}
+[data-testid="stAppViewContainer"] > .main, section.main {
+    overflow: hidden !important;
+    flex: 1 1 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+}
 
-/* ---------- Sidebar: themed, not hidden ---------- */
+/* Keep sidebar toggle buttons clean, correctly positioned, and prevent icon font ligature leaks */
+[data-testid="stSidebarHeader"] {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    padding: 0.4rem 0.75rem !important;
+    background: var(--surface) !important;
+    border-bottom: 1px solid var(--border) !important;
+}
+[data-testid="stSidebarCollapseButton"] {
+    display: inline-flex !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+[data-testid="stSidebarCollapseButton"] button {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: var(--surface2) !important;
+    color: var(--text) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 8px !important;
+    width: 32px !important;
+    height: 32px !important;
+    padding: 0 !important;
+    cursor: pointer !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+    transition: all 0.15s ease !important;
+}
+[data-testid="stSidebarCollapseButton"] button:hover {
+    background: var(--surface) !important;
+    border-color: var(--accent) !important;
+    color: var(--accent) !important;
+}
+
+/* Collapsed sidebar toggle button (visible in top-left when sidebar closed) */
+[data-testid="collapsedControl"] {
+    display: flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    z-index: 100000 !important;
+    position: fixed !important;
+    top: 10px !important;
+    left: 10px !important;
+}
+[data-testid="collapsedControl"] button {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: var(--surface) !important;
+    color: var(--text) !important;
+    border: 1.5px solid var(--border) !important;
+    border-radius: 8px !important;
+    width: 36px !important;
+    height: 36px !important;
+    padding: 0 !important;
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12) !important;
+    cursor: pointer !important;
+    transition: all 0.15s ease !important;
+}
+[data-testid="collapsedControl"] button:hover {
+    background: var(--surface2) !important;
+    border-color: var(--accent) !important;
+    color: var(--accent) !important;
+    transform: scale(1.05) !important;
+}
+}
+
+/* Protect icon font ligatures from being broken into raw text */
+[data-testid="stSidebarCollapseButton"] *,
+[data-testid="collapsedControl"] *,
+[data-testid="stSidebar"] span[class*="material"],
+[data-testid="stSidebar"] span[data-testid*="icon"] {
+    font-family: 'Material Symbols Rounded', 'Material Symbols Outlined', system-ui !important;
+}
+
+/* ---------- Anti-Shading / Completely Block Dimming, Fading & Stale Overlays ---------- */
+[data-stale="true"],
+[data-stale="true"] *,
+div[data-stale="true"],
+div[data-stale="true"] *,
+.stApp [data-stale="true"],
+.stApp [data-stale="true"] *,
+div[data-testid="stAppViewContainer"] [data-stale="true"],
+div[data-testid="stAppViewContainer"] [data-stale="true"] *,
+.main [data-stale="true"],
+.main [data-stale="true"] *,
+div[data-testid="stAppViewContainer"],
+section.main,
+.stApp,
+[data-testid="stAppViewBlockContainer"],
+.element-container,
+div[data-testid="stVerticalBlock"],
+div[data-testid="stColumn"],
+div[data-testid="column"],
+div[data-testid="stHorizontalBlock"],
+iframe[src*="streamlit_ace"],
+iframe[title*="streamlit_ace"] {
+    opacity: 1 !important;
+    filter: none !important;
+    -webkit-filter: none !important;
+    transition: none !important;
+}
+
+/* Hide Streamlit status widget overlay */
+div[data-testid="stStatusWidget"],
+[data-testid="stStatusWidget"] {
+    display: none !important;
+    visibility: hidden !important;
+}
+
+/* ---------- Sidebar: cleanly structured, elegant IDE sidebar ---------- */
 [data-testid="stSidebar"] {
     background: var(--surface) !important;
-    border-right: 1px solid var(--border) !important;
+    border-right: 1.5px solid var(--border) !important;
+    box-shadow: 4px 0 24px rgba(15, 23, 42, 0.08) !important;
+    transition: width 0.2s ease, min-width 0.2s ease, max-width 0.2s ease !important;
 }
-[data-testid="stSidebar"] label, [data-testid="stSidebar"] p, [data-testid="stSidebar"] span,
-[data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3,
-[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
+
+/* Expanded state: fixed clean width */
+[data-testid="stSidebar"][aria-expanded="true"],
+section[data-testid="stSidebar"][aria-expanded="true"] {
+    min-width: 320px !important;
+    max-width: 340px !important;
+    width: 330px !important;
+    display: block !important;
+    visibility: visible !important;
+}
+
+/* Minimized / Collapsed state: completely collapse to 0 width and release layout space */
+[data-testid="stSidebar"][aria-expanded="false"],
+section[data-testid="stSidebar"][aria-expanded="false"] {
+    min-width: 0 !important;
+    max-width: 0 !important;
+    width: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    overflow: hidden !important;
+    display: none !important;
+}
+[data-testid="stSidebarUserContent"] {
+    padding: 0.6rem 1.1rem 1.5rem 1.1rem !important;
+    overflow-x: hidden !important;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+}
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3,
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
     color: var(--text) !important;
     font-family: 'Manrope', system-ui, sans-serif;
 }
-/* ---------- Form Inputs & Textareas (Global & Stdin Tab) ---------- */
-input,
-.stTextInput input,
-[data-baseweb="base-input"] {
-    background: var(--surface2) !important;
-    background-color: var(--surface2) !important;
-    color: var(--text) !important;
-    border: 1px solid var(--border) !important;
-    border-color: var(--border) !important;
-    border-radius: 8px !important;
-    font-family: 'JetBrains Mono', monospace !important;
-    font-size: 0.9rem !important;
-    caret-color: var(--accent) !important;
-}
-
-/* Stdin Text Area */
-.ui-stdin-wrapper [data-testid="stTextArea"] textarea,
-.ui-stdin-wrapper textarea,
-[data-testid="stTextArea"] textarea,
-div[data-baseweb="textarea"] textarea {
-    background: var(--surface) !important;
-    background-color: var(--surface) !important;
-    color: var(--text) !important;
-    -webkit-text-fill-color: var(--text) !important;
-    caret-color: var(--accent) !important;
-    font-family: 'JetBrains Mono', Consolas, monospace !important;
-    font-size: 0.92rem !important;
-    font-weight: 500 !important;
-    border: 1.5px solid var(--border) !important;
-    border-radius: 10px !important;
-}
-
-.ui-stdin-wrapper textarea::placeholder,
-[data-testid="stTextArea"] textarea::placeholder,
-div[data-baseweb="textarea"] textarea::placeholder {
+[data-testid="stSidebar"] h3,
+[data-testid="stSidebar"] .stSubheader {
+    font-size: 0.88rem !important;
+    font-weight: 700 !important;
     color: var(--muted) !important;
-    -webkit-text-fill-color: var(--muted) !important;
-    font-weight: 400 !important;
-    opacity: 0.85 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.04em !important;
+    margin-top: 1rem !important;
+    margin-bottom: 0.4rem !important;
+    padding-bottom: 0.25rem !important;
+    border-bottom: 1px solid var(--border) !important;
 }
-
-.ui-stdin-wrapper textarea:focus,
-[data-testid="stTextArea"] textarea:focus,
-div[data-baseweb="textarea"] textarea:focus {
-    border-color: var(--accent) !important;
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18) !important;
-    outline: none !important;
+[data-testid="stSidebar"] label {
+    font-size: 0.84rem !important;
+    font-weight: 600 !important;
+    color: var(--text) !important;
 }
-[data-testid="stSidebar"] .stCheckbox > label { color: var(--text) !important; }
-[data-testid="stSidebar"] [data-baseweb="slider"] > div > div { background: var(--accent) !important; }
-
-/* ---------- Global Expanders (Main Page & Sidebar) ---------- */
-[data-testid="stExpander"],
-div[data-testid="stExpander"],
-[data-testid="stExpander"] details {
+[data-testid="stSidebar"] [data-baseweb="select"] > div,
+[data-testid="stSidebar"] input,
+[data-testid="stSidebar"] textarea {
     background: var(--surface2) !important;
-    background-color: var(--surface2) !important;
+    color: var(--text) !important;
     border: 1px solid var(--border) !important;
-    border-radius: 12px !important;
-    overflow: hidden !important;
+    border-radius: 8px !important;
 }
-[data-testid="stExpander"] summary {
+[data-testid="stSidebar"] .stCheckbox {
+    margin-bottom: 0.2rem !important;
+}
+[data-testid="stSidebar"] .stCheckbox > label {
     color: var(--text) !important;
     font-weight: 600 !important;
+    font-size: 0.84rem !important;
+}
+[data-testid="stSidebar"] [data-baseweb="slider"] > div > div {
+    background: var(--accent) !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] details {
     background: var(--surface2) !important;
-    background-color: var(--surface2) !important;
-    border-radius: 12px !important;
-    padding: 0.5rem 0.85rem !important;
-    transition: background-color 140ms ease-out !important;
-}
-[data-testid="stExpander"] summary:hover {
-    background: var(--surface) !important;
-    color: var(--accent) !important;
-}
-[data-testid="stExpander"] [data-testid="stExpanderDetails"] {
-    background: var(--surface2) !important;
-    background-color: var(--surface2) !important;
-    border-top: 1px solid var(--border) !important;
-    padding: 0.85rem 1rem !important;
-}
-
-/* ---------- Global Alerts & Banners (st.info, st.warning, st.error) ---------- */
-div[data-testid="stAlert"] {
-    background: var(--surface) !important;
-    background-color: var(--surface) !important;
     border: 1px solid var(--border) !important;
-    border-radius: 8px !important;
+    border-radius: 10px !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary {
     color: var(--text) !important;
-}
-div[data-testid="stAlert"] p,
-div[data-testid="stAlert"] span,
-div[data-testid="stAlert"] div {
-    color: var(--text) !important;
-}
-
-/* ---------- Rating Breakdown Deduction Cards ---------- */
-.ui-deduction-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 0.85rem 1.1rem;
-    margin-bottom: 0.75rem;
-    transition: border-color 150ms ease;
-}
-.ui-deduction-card:hover {
-    border-color: var(--accent);
-}
-.ui-deduction-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.5rem;
-}
-.ui-deduction-title {
-    font-weight: 700;
-    font-size: 0.95rem;
-    color: var(--text);
-    display: flex;
-    align-items: center;
-    gap: 0.45rem;
-}
-.ui-deduction-badge {
-    font-size: 0.76rem;
-    font-weight: 700;
-    padding: 0.2rem 0.65rem;
-    border-radius: 9999px;
-    letter-spacing: 0.02em;
-}
-.ui-deduction-badge.efficiency {
-    background: var(--warn_bg);
-    color: var(--warn);
-    border: 1px solid var(--warn);
-}
-.ui-deduction-badge.security-warn {
-    background: var(--warn_bg);
-    color: var(--warn);
-    border: 1px solid var(--warn);
-}
-.ui-deduction-badge.security-crit {
-    background: var(--err_bg);
-    color: var(--err);
-    border: 1px solid var(--err);
-}
-.ui-deduction-why {
-    font-size: 0.86rem;
-    color: var(--muted);
-    line-height: 1.5;
-    margin-bottom: 0.45rem;
-}
-.ui-deduction-why strong {
-    color: var(--text);
-}
-.ui-deduction-fix {
-    font-size: 0.86rem;
-    color: var(--text);
-    line-height: 1.5;
-    margin-bottom: 0.4rem;
-}
-.ui-deduction-fix strong {
-    color: var(--accent);
-}
-.ui-deduction-code {
-    background: var(--code_bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 0.5rem 0.75rem;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.82rem;
-    color: var(--accent);
-    margin-top: 0.35rem;
-    white-space: pre-wrap;
-    overflow-x: auto;
-}
-
-/* ---------- Agentic AI Execution Trace & Deliberation Cards ---------- */
-.ui-agent-trace-container {
-    display: flex;
-    flex-direction: column;
-    gap: 0.65rem;
-    margin-top: 0.75rem;
-    margin-bottom: 0.75rem;
-}
-.ui-agent-card {
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-left: 3.5px solid var(--accent);
-    border-radius: 8px;
-    padding: 0.7rem 0.95rem;
-    transition: transform 120ms ease, box-shadow 120ms ease;
-}
-.ui-agent-card.planner {
-    border-left-color: #38bdf8;
-}
-.ui-agent-card.optimizer {
-    border-left-color: #a855f7;
-}
-.ui-agent-card.judge-success {
-    border-left-color: #10b981;
-}
-.ui-agent-card.judge-warn {
-    border-left-color: #f59e0b;
-}
-.ui-agent-card.critic {
-    border-left-color: #ef4444;
-}
-.ui-agent-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.35rem;
-}
-.ui-agent-tag {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    font-size: 0.78rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    padding: 0.2rem 0.55rem;
-    border-radius: 6px;
-    background: rgba(255, 255, 255, 0.05);
-}
-.ui-agent-tag.planner { color: #38bdf8; background: rgba(56, 189, 248, 0.12); }
-.ui-agent-tag.optimizer { color: #c084fc; background: rgba(192, 132, 252, 0.12); }
-.ui-agent-tag.judge { color: #34d399; background: rgba(52, 211, 153, 0.12); }
-.ui-agent-tag.critic { color: #f87171; background: rgba(248, 113, 113, 0.12); }
-.ui-agent-action {
-    font-weight: 600;
-    font-size: 0.88rem;
-    color: var(--text);
-    margin-left: 0.4rem;
-}
-.ui-agent-time {
-    font-size: 0.76rem;
-    color: var(--muted);
-    font-family: 'JetBrains Mono', monospace;
-}
-.ui-agent-details {
-    font-size: 0.82rem;
-    color: var(--text);
-    opacity: 0.95;
-    line-height: 1.45;
-    white-space: pre-wrap;
-    background: var(--surface);
-    padding: 0.45rem 0.65rem;
-    border-radius: 6px;
-    margin-top: 0.35rem;
-    border: 1px solid var(--border);
-}
-.ui-agent-metric-delta {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.35rem 0.65rem;
-    border-radius: 8px;
-    background: var(--ok_bg);
-    border: 1px solid var(--ok);
-    color: var(--ok);
-    font-weight: 700;
-    font-size: 0.85rem;
-}
-[data-testid="collapsedControl"] {
-    color: var(--muted) !important;
-    background: var(--surface) !important;
-    border-right: 1px solid var(--border) !important;
+    font-weight: 600 !important;
 }
 
 /* ---------- Header bar ---------- */
-.app-bar { display: flex; align-items: center; gap: 0.85rem; height: 38px; }
-.app-title { font-size: 1.35rem; font-weight: 800; letter-spacing: -0.02em; color: var(--text); }
-.app-chip { font-size: 0.76rem; font-weight: 600; padding: 0.22rem 0.75rem; border-radius: 999px;
-            background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
-.app-chip.live { color: var(--accent); border-color: var(--accent); background: transparent; }
+.app-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    height: 38px;
+    flex-wrap: nowrap;
+    overflow: hidden;
+}
+.app-title {
+    font-size: 1.22rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    white-space: nowrap;
+}
+.app-chip {
+    font-size: 0.74rem;
+    font-weight: 600;
+    padding: 0.2rem 0.65rem;
+    border-radius: 999px;
+    background: var(--surface2);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    white-space: nowrap;
+}
+.app-chip.live {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: transparent;
+}
 
 /* ---------- Two fixed-height cards side-by-side ---------- */
 div[data-testid="stHorizontalBlock"] { gap: 1.25rem !important; }
@@ -363,61 +347,106 @@ div[data-testid="stColumn"]:has(.pane-right), div[data-testid="column"]:has(.pan
     overflow-y: auto !important;
     overflow-x: hidden !important;
     background: var(--surface) !important;
-    border: 1px solid var(--border) !important;
+    border: 1.5px solid var(--border) !important;
     border-radius: 16px !important;
-    padding: 1.1rem 1.2rem !important;
+    padding: 1.15rem 1.25rem !important;
     scrollbar-width: thin;
     scrollbar-color: var(--border) transparent;
     display: flex !important;
     flex-direction: column !important;
+    box-shadow: 0 10px 25px -4px rgba(15, 23, 42, 0.08), 0 4px 8px -2px rgba(15, 23, 42, 0.05), 0 0 0 1px rgba(15, 23, 42, 0.04) !important;
 }
 
-/* Ace editor container & iframe: Single, crisp, hairline border without duplicate black outlines */
-div[data-testid="stElementContainer"]:has(iframe[data-testid="stCustomComponentV1"]),
-div[data-testid="stElementContainer"]:has(iframe[title*="streamlit_ace"]),
-div:has(> iframe[data-testid="stCustomComponentV1"]) {
-    border: 1px solid var(--border) !important;
-    border-radius: 12px !important;
-    background: var(--code_bg) !important;
-    overflow: hidden !important;
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04) !important;
-    outline: none !important;
-    padding: 0 !important;
-}
-
-iframe[data-testid="stCustomComponentV1"],
-iframe.stCustomComponentV1,
-iframe[src*="streamlit_ace"],
-iframe[title*="streamlit_ace"] {
+/* Ace editor iframe & wrapper rounded styling with prominent clear boundary */
+div[data-testid="stCustomComponentV1"] {
     border: none !important;
-    border-width: 0 !important;
-    border-radius: 12px !important;
     background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
     box-shadow: none !important;
     outline: none !important;
-    display: block !important;
+}
+
+iframe[src*="streamlit_ace"],
+iframe[title*="streamlit_ace"] {
+    border: 1.5px solid #94A3B8 !important;
+    border-radius: 12px !important;
+    background: var(--code_bg) !important;
+    box-shadow: 0 4px 16px rgba(15, 23, 42, 0.09), 0 1px 3px rgba(15, 23, 42, 0.05) !important;
+    outline: none !important;
+}
+
+/* =========================================================================
+   INLINE CODE & BADGES (ELIMINATE ALL BLACK BOXES)
+   ========================================================================= */
+code,
+.stApp code,
+[data-testid="stMarkdownContainer"] code,
+p code,
+li code,
+span code,
+div code {
+    background: var(--surface2) !important;
+    background-color: var(--surface2) !important;
+    color: var(--accent) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 6px !important;
+    padding: 0.15rem 0.42rem !important;
+    font-family: 'JetBrains Mono', 'SF Mono', Consolas, monospace !important;
+    font-size: 0.84rem !important;
+    font-weight: 600 !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03) !important;
+}
+
+/* Code blocks and pre elements (LLDB responses, terminal output, stack traces) */
+pre,
+.stApp pre,
+[data-testid="stCode"],
+[data-testid="stCode"] pre,
+pre code {
+    background: var(--surface2) !important;
+    background-color: var(--surface2) !important;
+    color: var(--text) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 10px !important;
+    font-family: 'JetBrains Mono', 'SF Mono', Consolas, monospace !important;
+    font-size: 0.86rem !important;
+    line-height: 1.45 !important;
+}
+
+div[data-testid="stCode"] {
+    padding: 0.5rem !important;
 }
 
 /* Status Banner */
 .status {
     display: flex;
     align-items: center;
-    gap: 0.55rem;
-    padding: 0.55rem 0.95rem;
+    gap: 0.65rem;
+    padding: 0.65rem 1rem;
     border-radius: 10px;
     font-weight: 600;
     font-size: 0.88rem;
-    margin: 0.55rem 0 0.65rem 0;
+    margin: 0.6rem 0 0.7rem 0;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.05) !important;
 }
 .status.ok {
-    background: var(--ok_bg);
-    color: var(--ok);
-    border: 1.5px solid var(--ok);
+    background: var(--ok_bg) !important;
+    color: var(--ok) !important;
+    border: 1.5px solid var(--ok) !important;
+    border-left: 4.5px solid var(--ok) !important;
 }
 .status.err {
-    background: var(--err_bg);
-    color: var(--err);
-    border: 1.5px solid var(--err);
+    background: var(--err_bg) !important;
+    color: var(--err) !important;
+    border: 1.5px solid var(--err) !important;
+    border-left: 4.5px solid var(--err) !important;
+}
+.status.warn {
+    background: var(--warn_bg) !important;
+    color: var(--warn) !important;
+    border: 1.5px solid var(--warn) !important;
+    border-left: 4.5px solid var(--warn) !important;
 }
 
 /* Underline Tabs */
@@ -465,7 +494,7 @@ div[data-baseweb="tab-panel"] {
 
 /* Primary compile button */
 .stButton > button[kind="primary"], .stButton > button[data-testid="stBaseButton-primary"] {
-    background: var(--accent) !important;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%) !important;
     color: var(--on_accent) !important;
     border: none !important;
     border-radius: 10px !important;
@@ -474,10 +503,12 @@ div[data-baseweb="tab-panel"] {
     padding: 0.65rem 1rem !important;
     margin-top: 0.35rem !important;
     width: 100% !important;
-    box-shadow: none !important;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2) !important;
+    transition: transform 0.15s ease, filter 0.15s ease !important;
 }
 .stButton > button[kind="primary"]:hover {
-    filter: brightness(1.1) !important;
+    filter: brightness(1.12) !important;
+    transform: translateY(-1px) !important;
     color: var(--on_accent) !important;
 }
 
@@ -492,12 +523,14 @@ button[data-testid="stBaseButton-secondary"][key="pill_tests"],
 [data-testid="stButton-pill_optimize"] > button,
 [data-testid="stButton-pill_tests"] > button {
     border-radius: 9999px !important;
-    background: transparent !important;
-    border: 1px solid var(--border) !important;
+    background: var(--surface2) !important;
+    border: 1.5px solid var(--border) !important;
     color: var(--text) !important;
-    font-weight: 600 !important;
-    font-size: 0.87rem !important;
-    padding: 0.28rem 0.8rem !important;
+    font-weight: 700 !important;
+    font-size: 0.86rem !important;
+    padding: 0.35rem 0.95rem !important;
+    box-shadow: 0 2px 4px rgba(15, 23, 42, 0.06) !important;
+    transition: all 0.15s ease !important;
 }
 [data-testid="stButton-pill_explain"] > button:hover,
 [data-testid="stButton-pill_debug"] > button:hover,
@@ -505,32 +538,46 @@ button[data-testid="stBaseButton-secondary"][key="pill_tests"],
 [data-testid="stButton-pill_tests"] > button:hover {
     border-color: var(--accent) !important;
     color: var(--accent) !important;
-    background: transparent !important;
+    background: var(--surface) !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 10px rgba(37, 99, 235, 0.15) !important;
 }
 /* Explain always highlighted (active) */
 [data-testid="stButton-pill_explain"] > button {
     border: 1.5px solid var(--accent) !important;
     color: var(--accent) !important;
+    background: rgba(37, 99, 235, 0.08) !important;
+    font-weight: 700 !important;
+}
+
+/* Seamless Chat Message Container (remove awkward inner gray box) */
+div[data-testid="stColumn"]:has(.pane-right) div[data-testid="stVerticalBlockBorderWrapper"],
+div[data-testid="column"]:has(.pane-right) div[data-testid="stVerticalBlockBorderWrapper"] {
+    border: none !important;
+    padding: 0 !important;
     background: transparent !important;
 }
 
-/* Chat Messages */
+/* Chat Messages with prominent crisp boundaries */
 [data-testid="stChatMessage"] {
-    background: var(--surface2) !important;
-    border: 1px solid var(--border) !important;
+    background: var(--surface) !important;
+    border: 1.5px solid var(--border) !important;
     border-radius: 12px !important;
-    padding: 0.85rem 1.15rem !important;
-    margin-bottom: 0.65rem !important;
+    padding: 0.9rem 1.2rem !important;
+    margin-bottom: 0.85rem !important;
     max-height: none !important;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06) !important;
 }
-[data-testid="stChatMessage"] [data-testid="stChatMessageAvatar"] {
-    display: none !important;
+/* User message bubble */
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
+    background: rgba(37, 99, 235, 0.05) !important;
+    border-color: rgba(37, 99, 235, 0.3) !important;
 }
 [data-testid="stChatMessage"] p {
     color: var(--text) !important;
     font-size: 0.92rem !important;
-    line-height: 1.6 !important;
-    margin: 0.3rem 0 !important;
+    line-height: 1.5 !important;
+    margin: 0 !important;
 }
 [data-testid="stChatMessage"] ol {
     padding-left: 1.25rem !important;
@@ -545,130 +592,45 @@ button[data-testid="stBaseButton-secondary"][key="pill_tests"],
     color: var(--accent) !important;
     font-weight: 700 !important;
 }
-[data-testid="stChatMessage"] ul {
-    padding-left: 1.25rem !important;
-    margin: 0.35rem 0 !important;
-}
-[data-testid="stChatMessage"] ul li {
-    color: var(--text) !important;
-    margin-bottom: 0.3rem !important;
-    font-size: 0.92rem !important;
-}
-[data-testid="stChatMessage"] ul li::marker {
-    color: var(--accent) !important;
-}
 
-/* Headings inside chat responses */
-[data-testid="stChatMessage"] h1,
-[data-testid="stChatMessage"] h2,
-[data-testid="stChatMessage"] h3,
-[data-testid="stChatMessage"] h4 {
-    color: var(--text) !important;
-    font-weight: 700 !important;
-    margin-top: 0.75rem !important;
-    margin-bottom: 0.35rem !important;
-    letter-spacing: -0.01em;
-}
-[data-testid="stChatMessage"] h2 {
-    font-size: 1.12rem !important;
-    color: var(--accent) !important;
-}
-[data-testid="stChatMessage"] h3 {
-    font-size: 1.02rem !important;
-}
-/* Hide anchor link chain icons in chat headers */
-[data-testid="stChatMessage"] a[href^="#"],
-[data-testid="stChatMessage"] .header-anchor,
-[data-testid="stChatMessage"] a:has(svg),
-[data-testid="stChatMessage"] h1 a,
-[data-testid="stChatMessage"] h2 a,
-[data-testid="stChatMessage"] h3 a,
-[data-testid="stChatMessage"] h4 a {
-    display: none !important;
-}
-
-/* Inline Code (e.g. `sum`, `0`, `int`) */
-.stApp code:not(pre code),
-[data-testid="stMarkdownContainer"] code:not(pre code),
-[data-testid="stChatMessage"] code:not(pre code),
-[data-testid="stChatMessage"] p code,
-[data-testid="stChatMessage"] li code {
-    background: var(--code_bg) !important;
-    color: var(--accent) !important;
-    border: 1px solid var(--border) !important;
-    border-radius: 6px !important;
-    padding: 0.15rem 0.45rem !important;
-    font-family: 'JetBrains Mono', monospace !important;
-    font-size: 0.88em !important;
-    font-weight: 500 !important;
-    box-shadow: none !important;
-}
-
-/* LaTeX Math / KaTeX equations & symbols */
-.katex,
-.katex-html,
-.katex-display,
-[data-testid="stChatMessage"] .katex {
-    color: var(--text) !important;
-    background: transparent !important;
-    font-size: 1.02em !important;
-}
-.katex .base {
-    color: var(--text) !important;
-}
-.katex .mord,
-.katex .mbin,
-.katex .mrel,
-.katex .mpunct,
-.katex .minner {
-    color: var(--text) !important;
-}
-.katex .mord.mathnormal {
-    color: var(--accent) !important;
-}
-.katex-display {
-    padding: 0.4rem 0 !important;
-    margin: 0.4rem 0 !important;
-    overflow-x: auto;
-}
-
-/* Code Blocks in Chat & Markdown */
-[data-testid="stCode"],
-.stCodeBlock,
-[data-testid="stChatMessage"] pre,
-[data-testid="stChatMessage"] [data-testid="stCode"],
-[data-testid="stMarkdownContainer"] pre {
-    background: var(--code_bg) !important;
+/* Metric Cards */
+[data-testid="stMetric"] {
+    background: var(--surface2) !important;
     border: 1px solid var(--border) !important;
     border-radius: 12px !important;
-    box-shadow: none !important;
-    margin: 0.75rem 0 !important;
+    padding: 0.65rem 0.85rem !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03) !important;
 }
-
-[data-testid="stCode"] pre,
-.stCodeBlock pre,
-[data-testid="stChatMessage"] pre code,
-[data-testid="stMarkdownContainer"] pre code {
-    background: var(--code_bg) !important;
+[data-testid="stMetricLabel"] p {
+    font-size: 0.75rem !important;
+    font-weight: 700 !important;
+    color: var(--muted) !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.04em !important;
+}
+[data-testid="stMetricValue"] {
+    font-size: 1.2rem !important;
+    font-weight: 800 !important;
     color: var(--text) !important;
     font-family: 'JetBrains Mono', monospace !important;
-    font-size: 0.88rem !important;
-    line-height: 1.6 !important;
-    border: none !important;
-    padding: 0.85rem 1rem !important;
 }
 
-[data-testid="stCode"] button,
-.stCodeBlock button {
+/* Expanders in body */
+[data-testid="stExpander"] details {
     background: var(--surface2) !important;
-    color: var(--muted) !important;
     border: 1px solid var(--border) !important;
-    border-radius: 6px !important;
+    border-radius: 12px !important;
+    margin-top: 0.4rem !important;
+    overflow: hidden !important;
 }
-[data-testid="stCode"] button:hover,
-.stCodeBlock button:hover {
+[data-testid="stExpander"] summary {
     color: var(--text) !important;
-    border-color: var(--accent) !important;
+    font-weight: 700 !important;
+    font-size: 0.88rem !important;
+    padding: 0.6rem 0.85rem !important;
+}
+[data-testid="stExpander"] summary:hover {
+    color: var(--accent) !important;
 }
 
 /* Sticky Chat Input */
@@ -681,8 +643,9 @@ button[data-testid="stBaseButton-secondary"][key="pill_tests"],
 }
 [data-testid="stChatInput"] > div {
     background: var(--surface2) !important;
-    border: 1px solid var(--border) !important;
+    border: 1.5px solid var(--border) !important;
     border-radius: 12px !important;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08) !important;
 }
 [data-testid="stChatInput"] textarea {
     font-family: 'Manrope', system-ui, sans-serif !important;
@@ -874,59 +837,57 @@ button[data-testid="stBaseButton-secondary"][key="pill_tests"],
     background: var(--surface2);
 }
 
-/* Selectboxes (Language Picker, Theme Selector, Dropdowns) */
-div[data-testid="stSelectbox"] > div,
-div[data-testid="stSelectbox"] > div > div {
-    border: none !important;
-    background: transparent !important;
-    box-shadow: none !important;
-}
-div[data-testid="stSelectbox"] div[data-baseweb="select"],
-div[data-baseweb="select"] {
-    background: var(--surface2) !important;
-    background-color: var(--surface2) !important;
+/* =========================================================================
+   THEME SELECTBOX & DROPDOWN POPOVERS (PURE LIGHT THEME, NEVER BLACK)
+   ========================================================================= */
+.stSelectbox,
+[data-testid="stSelectbox"],
+div[data-baseweb="select"],
+div[data-baseweb="select"] > div,
+div[data-baseweb="select"] > div:hover,
+div[data-baseweb="select"] > div:focus {
+    background: var(--surface) !important;
+    background-color: var(--surface) !important;
     border: 1px solid var(--border) !important;
-    border-radius: 8px !important;
-    box-shadow: none !important;
-    outline: none !important;
-}
-div[data-baseweb="select"] > div {
-    background: transparent !important;
-    background-color: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    outline: none !important;
+    border-radius: 10px !important;
     color: var(--text) !important;
-    font-weight: 600 !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
 }
-div[data-baseweb="select"] *,
+
+div[data-baseweb="select"] [role="combobox"],
+div[data-baseweb="select"] [data-testid="stMarkdownContainer"],
 div[data-baseweb="select"] div,
 div[data-baseweb="select"] span,
-div[data-baseweb="select"] svg {
+div[data-baseweb="select"] p {
     background: transparent !important;
     background-color: transparent !important;
-    border-color: var(--border) !important;
     color: var(--text) !important;
+    font-weight: 600 !important;
+    font-size: 0.88rem !important;
+}
+
+div[data-baseweb="select"] svg {
     fill: var(--text) !important;
+    color: var(--text) !important;
 }
-div[data-baseweb="select"]:hover,
-div[data-baseweb="select"]:focus-within {
-    border-color: var(--accent) !important;
-    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12) !important;
-}
+
 div[data-baseweb="popover"],
 div[data-baseweb="popover"] > div,
 ul[role="listbox"],
 [data-baseweb="menu"] {
     background: var(--surface) !important;
+    background-color: var(--surface) !important;
     border: 1px solid var(--border) !important;
     border-radius: 12px !important;
-    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08) !important;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.06) !important;
     padding: 4px !important;
     z-index: 999999 !important;
 }
-li[role="option"], [data-baseweb="menu"] li {
+
+li[role="option"],
+[data-baseweb="menu"] li {
     background: var(--surface) !important;
+    background-color: var(--surface) !important;
     color: var(--text) !important;
     border-radius: 8px !important;
     font-weight: 600 !important;
@@ -934,10 +895,14 @@ li[role="option"], [data-baseweb="menu"] li {
     padding: 0.5rem 0.85rem !important;
     margin: 2px 0 !important;
     cursor: pointer !important;
+    transition: all 0.15s ease !important;
 }
-li[role="option"]:hover, [data-baseweb="menu"] li:hover,
+
+li[role="option"]:hover,
+[data-baseweb="menu"] li:hover,
 li[role="option"][aria-selected="true"] {
     background: var(--surface2) !important;
+    background-color: var(--surface2) !important;
     color: var(--accent) !important;
 }
 
@@ -975,6 +940,15 @@ def status_banner(kind: str, text: str) -> None:
 
 def setup_ui(model_name: str | None = None, provider: str | None = None) -> dict:
     """Renders the slim header (title, chips, theme picker), injects CSS, returns the theme dict."""
+    legacy_map = {
+        "Clean Studio": "Studio Light",
+        "Daylight": "Studio Light",
+        "Forest Dev": "Studio Light",
+        "Midnight": "Tokyo Night",
+    }
+    if st.session_state.get("ui_theme") in legacy_map:
+        st.session_state.ui_theme = legacy_map[st.session_state["ui_theme"]]
+
     if "ui_theme" not in st.session_state or st.session_state.ui_theme not in THEMES:
         st.session_state.ui_theme = DEFAULT_THEME
 
@@ -983,14 +957,15 @@ def setup_ui(model_name: str | None = None, provider: str | None = None) -> dict
         model_name = (
             st.session_state.get("last_served_model")
             or st.session_state.get("ollama_live_model_select")
-            or os.environ.get("LIVE_MODEL", "qwen2.5-coder:7b")
+            or st.session_state.get("gemini_live_model_select")
+            or os.environ.get("LIVE_MODEL", "qwen2.5-coder:3b")
         )
 
-    title, picker = st.columns([4.8, 1.5], vertical_alignment="center")
+    title, picker = st.columns([5.3, 1.2], vertical_alignment="center")
     with title:
         prov_chip = f'<span class="app-chip">{provider.capitalize()}</span>' if provider else ''
         st.markdown(
-            f'<div class="app-bar"><span class="app-title">Chatbot Compiler Debugger</span>'
+            f'<div class="app-bar"><span class="app-title">C++ Compiler &amp; Debugger</span>'
             f'<span class="app-chip live"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-right:6px;vertical-align:middle;"></span>{model_name}</span>'
             f'{prov_chip}'
             f'<span class="app-chip">🛡️ Sandboxed run</span></div>',
@@ -1002,55 +977,11 @@ def setup_ui(model_name: str | None = None, provider: str | None = None) -> dict
                      index=theme_names.index(current_theme) if current_theme in theme_names else 0)
     theme = get_theme()
     editor_ace_theme = f"ace/theme/{theme['editor']}"
-    compiled_css = re.sub(r"\n{2,}", "\n", f"{_vars_css(theme)}\n{_BASE_CSS}")
-    st.markdown(f"<style>{compiled_css}</style>", unsafe_allow_html=True)
-    # Cleanly strip inner MUI Paper background/border inside Ace editor iframe and sync theme
-    ace_clean_script = f"""
-    <script>
-    (function() {{
-        try {{
-            const win = window.parent || window;
-            const doc = win.document;
-            win.__aceThemeName = "{editor_ace_theme}";
-            const cleanAceFrames = () => {{
-                doc.querySelectorAll('iframe[data-testid="stCustomComponentV1"], iframe[src*="streamlit_ace"], iframe[title*="streamlit_ace"]').forEach((f) => {{
-                    f.style.setProperty('border', 'none', 'important');
-                    f.style.setProperty('outline', 'none', 'important');
-                    f.style.setProperty('box-shadow', 'none', 'important');
-                    f.style.setProperty('background', 'transparent', 'important');
-                    try {{
-                        const fdoc = f.contentDocument;
-                        if (!fdoc || !fdoc.head) return;
-                        let stEl = fdoc.getElementById('cd-ace-clean');
-                        if (!stEl) {{
-                            stEl = fdoc.createElement('style');
-                            stEl.id = 'cd-ace-clean';
-                            fdoc.head.appendChild(stEl);
-                        }}
-                        stEl.textContent = 'html, body, #root, .MuiPaper-root, .MuiBox-root {{ background: transparent !important; background-color: transparent !important; border: none !important; box-shadow: none !important; outline: none !important; margin: 0 !important; }} .ace_editor {{ border: none !important; box-shadow: none !important; outline: none !important; }}';
-                        fdoc.querySelectorAll('button').forEach((b) => {{
-                            if (b.textContent && (b.textContent.includes('Apply') || b.textContent.includes('Ctrl') || b.textContent.includes('Enter'))) {{
-                                b.style.display = 'none';
-                            }}
-                        }});
-                        const edEl = fdoc.querySelector('.ace_editor');
-                        const ace = f.contentWindow && f.contentWindow.ace;
-                        if (edEl && ace) {{
-                            const editor = ace.edit(edEl);
-                            if (win.__aceThemeName && editor.getTheme() !== win.__aceThemeName) {{
-                                editor.setTheme(win.__aceThemeName);
-                            }}
-                        }}
-                    }} catch (_) {{}}
-                }});
-            }};
-            cleanAceFrames();
-            if (!win.__cdAceCleanerInterval) {{
-                win.__cdAceCleanerInterval = win.setInterval(cleanAceFrames, 400);
-            }}
-        }} catch (_) {{}}
-    }})();
-    </script>
-    """
-    components.html(ace_clean_script, height=0, width=0)
+    st.markdown(f"<style>{_vars_css(theme)}{_BASE_CSS}</style>", unsafe_allow_html=True)
+    # Inject chosen ace theme into window
+    st.html(f'<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" '
+            f'onload="try{{'
+            f'window.parent.__aceThemeName=\'{editor_ace_theme}\';'
+            f'}}catch(e){{}}this.remove();" '
+            f'style="display:none;">')
     return theme

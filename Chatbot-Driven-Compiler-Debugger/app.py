@@ -722,10 +722,10 @@ def get_active_model_and_provider() -> tuple[str, str]:
 
 
 # --- UI CONFIGURATION ---
-st.set_page_config(page_title="Chatbot Compiler Debugger", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="C++ Compiler & Debugger", layout="wide", initial_sidebar_state="expanded")
 if "theme_initialized" not in st.session_state:
     st.session_state.theme_initialized = True
-    st.session_state.ui_theme = "Daylight"
+    st.session_state.ui_theme = "Studio Light"
 
 _curr_model, _curr_prov = get_active_model_and_provider()
 _active_theme_dict = setup_ui(model_name=_curr_model, provider=_curr_prov)
