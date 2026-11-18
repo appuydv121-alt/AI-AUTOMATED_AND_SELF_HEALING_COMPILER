@@ -357,8 +357,9 @@ div[data-testid="stColumn"]:has(.pane-right), div[data-testid="column"]:has(.pan
     box-shadow: 0 10px 25px -4px rgba(15, 23, 42, 0.08), 0 4px 8px -2px rgba(15, 23, 42, 0.05), 0 0 0 1px rgba(15, 23, 42, 0.04) !important;
 }
 
-/* Ace editor iframe & wrapper rounded styling with prominent clear boundary */
-div[data-testid="stCustomComponentV1"] {
+/* Code editor: completely remove harsh dark/black outer borders & boxes */
+div[data-testid="stCustomComponentV1"],
+div[data-testid="stCustomComponentV1"] * {
     border: none !important;
     background: transparent !important;
     padding: 0 !important;
@@ -368,11 +369,13 @@ div[data-testid="stCustomComponentV1"] {
 }
 
 iframe[src*="streamlit_ace"],
-iframe[title*="streamlit_ace"] {
-    border: 1.5px solid #94A3B8 !important;
-    border-radius: 12px !important;
+iframe[title*="streamlit_ace"],
+iframe[data-testid="stCustomComponentV1"],
+div[data-testid="stCustomComponentV1"] iframe {
+    border: none !important;
+    border-radius: 8px !important;
     background: var(--code_bg) !important;
-    box-shadow: 0 4px 16px rgba(15, 23, 42, 0.09), 0 1px 3px rgba(15, 23, 42, 0.05) !important;
+    box-shadow: none !important;
     outline: none !important;
 }
 
@@ -978,10 +981,32 @@ def setup_ui(model_name: str | None = None, provider: str | None = None) -> dict
     theme = get_theme()
     editor_ace_theme = f"ace/theme/{theme['editor']}"
     st.markdown(f"<style>{_vars_css(theme)}{_BASE_CSS}</style>", unsafe_allow_html=True)
-    # Inject chosen ace theme into window
+    # Inject chosen ace theme into window and strip all black/dark outer lines from editor
     st.html(f'<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" '
             f'onload="try{{'
             f'window.parent.__aceThemeName=\'{editor_ace_theme}\';'
+            f'const cleanBorders = () => {{'
+            f'  const doc = window.parent ? window.parent.document : document;'
+            f'  doc.querySelectorAll(\'iframe[src*=\"streamlit_ace\"], iframe[title*=\"streamlit_ace\"], div[data-testid=\"stCustomComponentV1\"] iframe\').forEach(f => {{'
+            f'    f.style.setProperty(\'border\', \'none\', \'important\');'
+            f'    f.style.setProperty(\'outline\', \'none\', \'important\');'
+            f'    f.style.setProperty(\'box-shadow\', \'none\', \'important\');'
+            f'    try {{'
+            f'      const fdoc = f.contentDocument;'
+            f'      if(fdoc && fdoc.head) {{'
+            f'        let s = fdoc.getElementById(\'clean-ace-borders\');'
+            f'        if(!s) {{'
+            f'          s = fdoc.createElement(\'style\');'
+            f'          s.id = \'clean-ace-borders\';'
+            f'          fdoc.head.appendChild(s);'
+            f'        }}'
+            f'        s.textContent = \'html, body, #root, .MuiPaper-root, .MuiBox-root {{ background: transparent !important; border: none !important; box-shadow: none !important; outline: none !important; margin: 0 !important; }} .ace_editor {{ border: none !important; outline: none !important; box-shadow: none !important; }}\';'
+            f'      }}'
+            f'    }} catch(e) {{}}'
+            f'  }});'
+            f'}};'
+            f'cleanBorders();'
+            f'if(!window.__cleanAceInterval) {{ window.__cleanAceInterval = setInterval(cleanBorders, 250); }}'
             f'}}catch(e){{}}this.remove();" '
             f'style="display:none;">')
     return theme
