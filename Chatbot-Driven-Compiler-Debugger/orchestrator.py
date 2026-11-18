@@ -126,7 +126,10 @@ def _compare_test_case(reference_run, candidate_run, test_name: str) -> tuple[bo
 
 def _quality_does_not_regress(candidate: dict[str, Any], reference: dict[str, Any]) -> bool:
     return (
-        candidate.get("security_score", 0.0) >= reference.get("security_score", 0.0)
+        candidate.get("security_risk_weight", 0.0)
+        <= reference.get("security_risk_weight", 0.0)
+        and candidate.get("security_score", 0.0)
+        >= reference.get("security_score", 0.0)
         and candidate.get("efficiency_score", 0.0) >= reference.get("efficiency_score", 0.0)
     )
 
@@ -201,7 +204,69 @@ class OrchestratorStateMachine:
         if self.language in ("cpp", "c++", "c"):
             out = src
 
-            # 1. Replace Bubble Sort / Selection Sort O(N^2) loops with std::sort (O(N log N))
+            # 1. Replace Variable Length Arrays (VLA) int arr[n]; with safe std::vector<int> arr(n);
+            vla_m = re.search(r"\bint\s+([a-zA-Z_]\w*)\s*\[\s*([a-zA-Z_]\w*)\s*\]\s*;", out)
+            if vla_m:
+                arr_name = vla_m.group(1)
+                size_var = vla_m.group(2)
+                out = out[:vla_m.start()] + f"vector<int> {arr_name}({size_var});" + out[vla_m.end():]
+                if "<vector>" not in out:
+                    if "#include <iostream>" in out:
+                        out = re.sub(r"(#include\s*<iostream>)", r"\1\n#include <vector>", out, count=1)
+                    else:
+                        out = "#include <vector>\n" + out
+
+            # 2. Replace nested O(N^2) duplicate search loops with O(N) unordered_set
+            dup_pat = re.compile(
+                r"for\s*\(\s*int\s+([a-zA-Z_]\w*)\s*=\s*0\s*;\s*\1\s*<\s*([a-zA-Z_]\w*)\s*;\s*\1\s*\+\+\s*\)\s*\{"
+                r"(?:[ \t\r\n]|//[^\n]*)*"
+                r"for\s*\(\s*int\s+([a-zA-Z_]\w*)\s*=\s*\1\s*\+\s*1\s*;\s*\3\s*<\s*\2\s*;\s*\3\s*\+\+\s*\)\s*\{"
+                r"(?:[ \t\r\n]|//[^\n]*)*"
+                r"if\s*\(\s*([a-zA-Z_]\w*)\[\s*\1\s*\]\s*==\s*\4\[\s*\3\s*\]\s*\)\s*\{"
+                r"([\s\S]*?)\}"
+                r"(?:[ \t\r\n]|//[^\n]*)*\}"
+                r"(?:[ \t\r\n]|//[^\n]*)*\}",
+                re.MULTILINE
+            )
+            dup_m = dup_pat.search(out)
+            if dup_m:
+                i_var, n_var, j_var, arr_name, body = dup_m.group(1), dup_m.group(2), dup_m.group(3), dup_m.group(4), dup_m.group(5)
+                clean_body = body.strip()
+                replacement = (
+                    f"unordered_set<int> seen, printed;\n"
+                    f"    for (int {i_var} = 0; {i_var} < {n_var}; {i_var}++) {{\n"
+                    f"        if (seen.count({arr_name}[{i_var}])) {{\n"
+                    f"            if (!printed.count({arr_name}[{i_var}])) {{\n"
+                    f"                {clean_body}\n"
+                    f"                printed.insert({arr_name}[{i_var}]);\n"
+                    f"            }}\n"
+                    f"        }} else {{\n"
+                    f"            seen.insert({arr_name}[{i_var}]);\n"
+                    f"        }}\n"
+                    f"    }}"
+                )
+                out = out[:dup_m.start()] + replacement + out[dup_m.end():]
+                if "<unordered_set>" not in out:
+                    if "#include <iostream>" in out:
+                        out = re.sub(r"(#include\s*<iostream>)", r"\1\n#include <unordered_set>", out, count=1)
+                    else:
+                        out = "#include <unordered_set>\n" + out
+
+            # 3. Simplify redundant counting loop (e.g. for (int j = 0; j < d; j++) count++; sum += count;) -> sum += d;
+            cnt_loop_pat = re.compile(
+                r"int\s+([a-zA-Z_]\w*)\s*=\s*0\s*;\s*"
+                r"for\s*\(\s*int\s+([a-zA-Z_]\w*)\s*=\s*0\s*;\s*\2\s*<\s*([a-zA-Z_]\w*)\s*;\s*\2\s*\+\+\s*\)\s*\{"
+                r"\s*\1\s*\+\+\s*;\s*\}"
+                r"\s*([a-zA-Z_]\w*)\s*\+=\s*\1\s*;",
+                re.MULTILINE
+            )
+            cnt_m = cnt_loop_pat.search(out)
+            if cnt_m:
+                d_var = cnt_m.group(3)
+                target_var = cnt_m.group(4)
+                out = out[:cnt_m.start()] + f"{target_var} += {d_var};" + out[cnt_m.end():]
+
+            # 4. Replace Bubble Sort / Selection Sort O(N^2) loops with std::sort (O(N log N))
             loop_start_pat = re.compile(r"\bfor\s*\(", re.MULTILINE)
             for m in list(loop_start_pat.finditer(out)):
                 paren_start = m.end() - 1
@@ -240,7 +305,7 @@ class OrchestratorStateMachine:
                         out = out[:m.start()] + rep + out[k:]
                         break
 
-            # 2. Hoist redundant sort inside loop outside
+            # 5. Hoist redundant sort inside loop outside
             for m in list(loop_start_pat.finditer(out)):
                 paren_start = m.end() - 1
                 paren_count = 1
@@ -273,7 +338,7 @@ class OrchestratorStateMachine:
                         out = out[:m.start()] + sort_stmt + "\n    " + new_loop + out[k:]
                         break
 
-            # 3. Ensure <algorithm> is included if sort is present
+            # 6. Ensure <algorithm> is included if sort is present
             if "sort(" in out and "<algorithm>" not in out:
                 if "#include <iostream>" in out:
                     out = re.sub(r"(#include\s*<iostream>)", r"\1\n#include <algorithm>", out, count=1)
@@ -299,7 +364,8 @@ class OrchestratorStateMachine:
             "info",
             f"Static/Sanitizer Flaws: {baseline_evidence.get('total_flaws_found', 0)}, "
             f"Baseline Runtime: {baseline_evidence.get('profile_metrics', {}).get('median_time_ms', 0)} ms. "
-            f"Security: {base_sec:.0f}%, Efficiency: {base_eff:.0f}%.",
+            f"Static security checks clear: {base_sec:.0f}%, "
+            f"static efficiency checks clear: {base_eff:.0f}%.",
             elapsed_ms=(time.monotonic() - t0) * 1000.0,
         )
 
@@ -600,8 +666,8 @@ class OrchestratorStateMachine:
                     f"Candidate accepted and verified (Cycle {cycle})",
                     "success",
                     f"Passed all {passed_tests}/{tests_evaluated} generated cases. "
-                    f"Security: {cand_sec:.0f}% (was {base_sec:.0f}%), "
-                    f"Efficiency: {cand_eff:.0f}% (was {base_eff:.0f}%). "
+                    f"Static security checks clear: {cand_sec:.0f}% (was {base_sec:.0f}%), "
+                    f"static efficiency checks clear: {cand_eff:.0f}% (was {base_eff:.0f}%). "
                     f"Median runtime: {candidate_runtime:.2f} ms (reference {baseline_runtime:.2f} ms).",
                     elapsed_ms=(time.monotonic() - t_judge) * 1000.0,
                 )
@@ -611,7 +677,7 @@ class OrchestratorStateMachine:
                     self._transition(
                         "COMPLETED",
                         cycle=cycle,
-                        reason="Both heuristic quality scores reached 100%; behavior checks passed",
+                        reason="No configured static checks flagged; behavior checks passed",
                     )
                     break
             else:
@@ -619,14 +685,16 @@ class OrchestratorStateMachine:
                 reason = (
                     "Candidate regressed measured runtime"
                     if not runtime_not_regressed
-                    else "Candidate did not improve quality scores or measured runtime"
+                    else "Candidate did not improve static check scores or measured runtime"
                 )
                 self._log_trace(
                     "SandboxJudge",
                     f"Candidate not accepted (Cycle {cycle})",
                     "warning",
-                    f"{reason}. Security: {cand_sec:.0f}% (reference {best_candidate_metrics.get('security_score', 0.0):.0f}%), "
-                    f"efficiency: {cand_eff:.0f}% (reference {best_candidate_metrics.get('efficiency_score', 0.0):.0f}%), "
+                    f"{reason}. Static security checks clear: {cand_sec:.0f}% "
+                    f"(reference {best_candidate_metrics.get('security_score', 0.0):.0f}%), "
+                    f"static efficiency checks clear: {cand_eff:.0f}% "
+                    f"(reference {best_candidate_metrics.get('efficiency_score', 0.0):.0f}%), "
                     f"median runtime: {candidate_runtime:.2f} ms (reference {baseline_runtime:.2f} ms).",
                     elapsed_ms=(time.monotonic() - t_judge) * 1000.0,
                 )

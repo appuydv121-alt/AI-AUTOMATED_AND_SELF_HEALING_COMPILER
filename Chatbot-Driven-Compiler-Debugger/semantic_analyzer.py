@@ -54,8 +54,8 @@ class SemanticDictionary:
 
 
 _DEFAULT_DICTIONARY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "semantic_dictionary.json")
-_MAX_SOURCE_SIZE = 500_000
-_MAX_DECLARATIONS = 5_000
+_MAX_SOURCE_SIZE = 2_000_000
+_MAX_DECLARATIONS = 20_000
 _NUMERIC_TEXT_RE = re.compile(r"[+-]?\d+(?:\.\d+)?")
 _INTEGER_TEXT_RE = re.compile(r"[+-]?\d+")
 _FAMILY_COMPATIBILITY = {

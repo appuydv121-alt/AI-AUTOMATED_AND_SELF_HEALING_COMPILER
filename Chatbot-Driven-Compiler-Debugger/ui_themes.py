@@ -8,9 +8,24 @@ Goals:
   3. Clean pixel-faithful reproduction of modern IDE cards without clutter.
 """
 
+import os
+import re
 import streamlit as st
+import streamlit.components.v1 as components
 
 THEMES = {
+    # Clean modern light theme: crisp slate background, cobalt electric accent, rich contrast
+    "Daylight": dict(
+        scheme="light", editor="xcode",
+        bg="#F8FAFC", surface="#FFFFFF", surface2="#F1F5F9", border="#E2E8F0",
+        text="#0F172A", muted="#64748B",
+        accent="#2563EB", on_accent="#FFFFFF", accent2="#4F46E5",
+        ok="#059669", ok_bg="#ECFDF5",
+        warn="#D97706", warn_bg="#FFFBEB",
+        err="#DC2626", err_bg="#FEF2F2",
+        code_bg="#F8FAFC",
+        shadow="0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 4px 12px -2px rgba(0, 0, 0, 0.05)",
+    ),
     # Dark green-slate theme: editor feel, mint accent with amber highlights.
     "Forest Dev": dict(
         scheme="dark", editor="nord_dark",
@@ -35,20 +50,8 @@ THEMES = {
         code_bg="#101728",
         shadow="none",
     ),
-    # Clean light theme: cool paper background, cobalt accent.
-    "Daylight": dict(
-        scheme="light", editor="xcode",
-        bg="#F0F4F8", surface="#FFFFFF", surface2="#F1F4F9", border="#C8D4E0",
-        text="#18212F", muted="#5A6779",
-        accent="#2563EB", on_accent="#FFFFFF", accent2="#0E8F8D",
-        ok="#14803C", ok_bg="#E7F6EC",
-        warn="#8A5B00", warn_bg="#FFF3D1",
-        err="#C62828", err_bg="#FDE8E8",
-        code_bg="#FFFFFF",
-        shadow="0 1px 4px rgba(20,30,60,.06), 0 4px 16px rgba(20,30,60,.05)",
-    ),
 }
-DEFAULT_THEME = "Forest Dev"
+DEFAULT_THEME = "Daylight"
 
 _BASE_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
@@ -77,7 +80,6 @@ header[data-testid="stHeader"] { display: none !important; }
     font-family: 'Manrope', system-ui, sans-serif;
 }
 /* ---------- Form Inputs & Textareas (Global & Stdin Tab) ---------- */
-[data-baseweb="select"] > div,
 input,
 .stTextInput input,
 [data-baseweb="base-input"] {
@@ -92,28 +94,28 @@ input,
     caret-color: var(--accent) !important;
 }
 
-/* Stdin Text Area - high-contrast black text on white background */
+/* Stdin Text Area */
 .ui-stdin-wrapper [data-testid="stTextArea"] textarea,
 .ui-stdin-wrapper textarea,
 [data-testid="stTextArea"] textarea,
 div[data-baseweb="textarea"] textarea {
-    background: #ffffff !important;
-    background-color: #ffffff !important;
-    color: #000000 !important;
-    -webkit-text-fill-color: #000000 !important;
-    caret-color: #000000 !important;
+    background: var(--surface) !important;
+    background-color: var(--surface) !important;
+    color: var(--text) !important;
+    -webkit-text-fill-color: var(--text) !important;
+    caret-color: var(--accent) !important;
     font-family: 'JetBrains Mono', Consolas, monospace !important;
     font-size: 0.92rem !important;
-    font-weight: 600 !important;
-    border: 1.5px solid #cbd5e1 !important;
-    border-radius: 8px !important;
+    font-weight: 500 !important;
+    border: 1.5px solid var(--border) !important;
+    border-radius: 10px !important;
 }
 
 .ui-stdin-wrapper textarea::placeholder,
 [data-testid="stTextArea"] textarea::placeholder,
 div[data-baseweb="textarea"] textarea::placeholder {
-    color: #64748b !important;
-    -webkit-text-fill-color: #64748b !important;
+    color: var(--muted) !important;
+    -webkit-text-fill-color: var(--muted) !important;
     font-weight: 400 !important;
     opacity: 0.85 !important;
 }
@@ -121,8 +123,8 @@ div[data-baseweb="textarea"] textarea::placeholder {
 .ui-stdin-wrapper textarea:focus,
 [data-testid="stTextArea"] textarea:focus,
 div[data-baseweb="textarea"] textarea:focus {
-    border-color: #3ddc97 !important;
-    box-shadow: 0 0 0 2px rgba(61, 220, 151, 0.3) !important;
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18) !important;
     outline: none !important;
 }
 [data-testid="stSidebar"] .stCheckbox > label { color: var(--text) !important; }
@@ -206,19 +208,19 @@ div[data-testid="stAlert"] div {
     letter-spacing: 0.02em;
 }
 .ui-deduction-badge.efficiency {
-    background: rgba(245, 184, 75, 0.15);
-    color: #F5B84B;
-    border: 1px solid rgba(245, 184, 75, 0.35);
+    background: var(--warn_bg);
+    color: var(--warn);
+    border: 1px solid var(--warn);
 }
 .ui-deduction-badge.security-warn {
-    background: rgba(245, 184, 75, 0.15);
-    color: #F5B84B;
-    border: 1px solid rgba(245, 184, 75, 0.35);
+    background: var(--warn_bg);
+    color: var(--warn);
+    border: 1px solid var(--warn);
 }
 .ui-deduction-badge.security-crit {
-    background: rgba(255, 107, 107, 0.15);
-    color: #FF6B6B;
-    border: 1px solid rgba(255, 107, 107, 0.35);
+    background: var(--err_bg);
+    color: var(--err);
+    border: 1px solid var(--err);
 }
 .ui-deduction-why {
     font-size: 0.86rem;
@@ -318,14 +320,14 @@ div[data-testid="stAlert"] div {
 .ui-agent-details {
     font-size: 0.82rem;
     color: var(--text);
-    opacity: 0.9;
+    opacity: 0.95;
     line-height: 1.45;
     white-space: pre-wrap;
-    background: rgba(0, 0, 0, 0.15);
+    background: var(--surface);
     padding: 0.45rem 0.65rem;
     border-radius: 6px;
     margin-top: 0.35rem;
-    border: 1px solid rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border);
 }
 .ui-agent-metric-delta {
     display: inline-flex;
@@ -333,9 +335,9 @@ div[data-testid="stAlert"] div {
     gap: 0.4rem;
     padding: 0.35rem 0.65rem;
     border-radius: 8px;
-    background: rgba(61, 220, 151, 0.1);
-    border: 1px solid rgba(61, 220, 151, 0.3);
-    color: #3ddc97;
+    background: var(--ok_bg);
+    border: 1px solid var(--ok);
+    color: var(--ok);
     font-weight: 700;
     font-size: 0.85rem;
 }
@@ -370,17 +372,30 @@ div[data-testid="stColumn"]:has(.pane-right), div[data-testid="column"]:has(.pan
     flex-direction: column !important;
 }
 
-/* Ace editor iframe & wrapper rounded styling without harsh borders */
-div[data-testid="stCustomComponentV1"],
-div[data-testid="stCustomComponentV1"] > iframe,
-iframe[src*="streamlit_ace"],
-iframe[title*="streamlit_ace"],
-iframe {
+/* Ace editor container & iframe: Single, crisp, hairline border without duplicate black outlines */
+div[data-testid="stElementContainer"]:has(iframe[data-testid="stCustomComponentV1"]),
+div[data-testid="stElementContainer"]:has(iframe[title*="streamlit_ace"]),
+div:has(> iframe[data-testid="stCustomComponentV1"]) {
     border: 1px solid var(--border) !important;
     border-radius: 12px !important;
     background: var(--code_bg) !important;
+    overflow: hidden !important;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04) !important;
+    outline: none !important;
+    padding: 0 !important;
+}
+
+iframe[data-testid="stCustomComponentV1"],
+iframe.stCustomComponentV1,
+iframe[src*="streamlit_ace"],
+iframe[title*="streamlit_ace"] {
+    border: none !important;
+    border-width: 0 !important;
+    border-radius: 12px !important;
+    background: transparent !important;
     box-shadow: none !important;
     outline: none !important;
+    display: block !important;
 }
 
 /* Status Banner */
@@ -859,22 +874,45 @@ button[data-testid="stBaseButton-secondary"][key="pill_tests"],
     background: var(--surface2);
 }
 
-/* Theme Selectbox & Dropdown Popover */
+/* Selectboxes (Language Picker, Theme Selector, Dropdowns) */
+div[data-testid="stSelectbox"] > div,
+div[data-testid="stSelectbox"] > div > div {
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+div[data-testid="stSelectbox"] div[data-baseweb="select"],
 div[data-baseweb="select"] {
     background: var(--surface2) !important;
+    background-color: var(--surface2) !important;
     border: 1px solid var(--border) !important;
-    border-radius: 10px !important;
+    border-radius: 8px !important;
+    box-shadow: none !important;
+    outline: none !important;
 }
 div[data-baseweb="select"] > div {
     background: transparent !important;
+    background-color: transparent !important;
     border: none !important;
+    box-shadow: none !important;
+    outline: none !important;
     color: var(--text) !important;
     font-weight: 600 !important;
 }
-div[data-baseweb="select"] * {
-    color: var(--text) !important;
+div[data-baseweb="select"] *,
+div[data-baseweb="select"] div,
+div[data-baseweb="select"] span,
+div[data-baseweb="select"] svg {
     background: transparent !important;
+    background-color: transparent !important;
+    border-color: var(--border) !important;
+    color: var(--text) !important;
     fill: var(--text) !important;
+}
+div[data-baseweb="select"]:hover,
+div[data-baseweb="select"]:focus-within {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12) !important;
 }
 div[data-baseweb="popover"],
 div[data-baseweb="popover"] > div,
@@ -883,7 +921,7 @@ ul[role="listbox"],
     background: var(--surface) !important;
     border: 1px solid var(--border) !important;
     border-radius: 12px !important;
-    box-shadow: 0 8px 30px rgba(0,0,0,0.5) !important;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08) !important;
     padding: 4px !important;
     z-index: 999999 !important;
 }
@@ -945,7 +983,7 @@ def setup_ui(model_name: str | None = None, provider: str | None = None) -> dict
         model_name = (
             st.session_state.get("last_served_model")
             or st.session_state.get("ollama_live_model_select")
-            or os.environ.get("LIVE_MODEL", "qwen2.5-coder:3b")
+            or os.environ.get("LIVE_MODEL", "qwen2.5-coder:7b")
         )
 
     title, picker = st.columns([4.8, 1.5], vertical_alignment="center")
@@ -964,9 +1002,55 @@ def setup_ui(model_name: str | None = None, provider: str | None = None) -> dict
                      index=theme_names.index(current_theme) if current_theme in theme_names else 0)
     theme = get_theme()
     editor_ace_theme = f"ace/theme/{theme['editor']}"
-    st.markdown(f"<style>{_vars_css(theme)}{_BASE_CSS}</style>", unsafe_allow_html=True)
-    # Inject the chosen ace theme name into window so syncAceTheme in ui_theme.py respects it
-    st.html(f'<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" '
-            f'onload="try{{window.parent.__aceThemeName=\'{editor_ace_theme}\';}}catch(e){{}}this.remove();" '
-            f'style="display:none;">')
+    compiled_css = re.sub(r"\n{2,}", "\n", f"{_vars_css(theme)}\n{_BASE_CSS}")
+    st.markdown(f"<style>{compiled_css}</style>", unsafe_allow_html=True)
+    # Cleanly strip inner MUI Paper background/border inside Ace editor iframe and sync theme
+    ace_clean_script = f"""
+    <script>
+    (function() {{
+        try {{
+            const win = window.parent || window;
+            const doc = win.document;
+            win.__aceThemeName = "{editor_ace_theme}";
+            const cleanAceFrames = () => {{
+                doc.querySelectorAll('iframe[data-testid="stCustomComponentV1"], iframe[src*="streamlit_ace"], iframe[title*="streamlit_ace"]').forEach((f) => {{
+                    f.style.setProperty('border', 'none', 'important');
+                    f.style.setProperty('outline', 'none', 'important');
+                    f.style.setProperty('box-shadow', 'none', 'important');
+                    f.style.setProperty('background', 'transparent', 'important');
+                    try {{
+                        const fdoc = f.contentDocument;
+                        if (!fdoc || !fdoc.head) return;
+                        let stEl = fdoc.getElementById('cd-ace-clean');
+                        if (!stEl) {{
+                            stEl = fdoc.createElement('style');
+                            stEl.id = 'cd-ace-clean';
+                            fdoc.head.appendChild(stEl);
+                        }}
+                        stEl.textContent = 'html, body, #root, .MuiPaper-root, .MuiBox-root {{ background: transparent !important; background-color: transparent !important; border: none !important; box-shadow: none !important; outline: none !important; margin: 0 !important; }} .ace_editor {{ border: none !important; box-shadow: none !important; outline: none !important; }}';
+                        fdoc.querySelectorAll('button').forEach((b) => {{
+                            if (b.textContent && (b.textContent.includes('Apply') || b.textContent.includes('Ctrl') || b.textContent.includes('Enter'))) {{
+                                b.style.display = 'none';
+                            }}
+                        }});
+                        const edEl = fdoc.querySelector('.ace_editor');
+                        const ace = f.contentWindow && f.contentWindow.ace;
+                        if (edEl && ace) {{
+                            const editor = ace.edit(edEl);
+                            if (win.__aceThemeName && editor.getTheme() !== win.__aceThemeName) {{
+                                editor.setTheme(win.__aceThemeName);
+                            }}
+                        }}
+                    }} catch (_) {{}}
+                }});
+            }};
+            cleanAceFrames();
+            if (!win.__cdAceCleanerInterval) {{
+                win.__cdAceCleanerInterval = win.setInterval(cleanAceFrames, 400);
+            }}
+        }} catch (_) {{}}
+    }})();
+    </script>
+    """
+    components.html(ace_clean_script, height=0, width=0)
     return theme

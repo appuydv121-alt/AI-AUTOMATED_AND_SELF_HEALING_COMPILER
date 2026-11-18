@@ -1,4 +1,9 @@
 [theme]
+base = "light"
+primaryColor = "#2563EB"
+backgroundColor = "#F8FAFC"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#0F172A"
 baseFontSize = 16
 baseFontWeight = 400
 font = "sans-serif"
@@ -8,10 +13,10 @@ headingFontWeights = [650, 600, 600, 600, 600, 600]
 codeFont = "monospace"
 codeFontSize = "0.85rem"
 codeFontWeight = 400
-baseRadius = "small"
-buttonRadius = "small"
-showWidgetBorder = true
-showSidebarBorder = true
+baseRadius = "medium"
+buttonRadius = "medium"
+showWidgetBorder = false
+showSidebarBorder = false
 
 [theme.light]
 primaryColor = "#2456D6"

@@ -97,6 +97,61 @@ class TestOllamaTaskRouting(unittest.TestCase):
 
         call_ollama.assert_not_called()
 
+    @patch("llm_provider._call_ollama")
+    @patch("llm_provider._cache_get")
+    def test_dangerous_prompt_is_blocked_before_cache_lookup(self, cache_get, call_ollama):
+        prompt = 'Source code: int main() { system("echo unsafe"); }'
+
+        with self.assertRaisesRegex(RuntimeError, "Model request blocked"):
+            llm_provider.generate_task("optimal_code", prompt)
+
+        cache_get.assert_not_called()
+        call_ollama.assert_not_called()
+
+    @patch("llm_provider._call_ollama")
+    @patch("llm_provider._cache_get")
+    def test_prompt_with_secret_is_blocked_before_cache_lookup(self, cache_get, call_ollama):
+        prompt = 'Source code: const API_KEY = "sample-secret-value-123";'
+
+        with self.assertRaisesRegex(RuntimeError, "credential assignment"):
+            llm_provider.generate_task("optimal_code", prompt)
+
+        cache_get.assert_not_called()
+        call_ollama.assert_not_called()
+
+    @patch("llm_provider._ollama_model_available")
+    @patch("llm_provider._env")
+    def test_remote_http_endpoint_is_rejected_before_model_check(self, mock_env, available):
+        mock_env.side_effect = lambda name, default="": {
+            "OLLAMA_HOST": "http://ollama.example.com:11434",
+        }.get(name, default)
+
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            llm_provider._call_ollama("chat", "Summarize this code.")
+
+        available.assert_not_called()
+
+    @patch("ai_providers.requests.post")
+    def test_direct_ollama_provider_blocks_dangerous_source(self, mock_post):
+        provider = OllamaProvider(model="qwen2.5-coder:7b")
+
+        with self.assertRaisesRegex(RuntimeError, "Model request blocked"):
+            provider.generate('int main() { system("whoami"); }')
+
+        mock_post.assert_not_called()
+
+    @patch("ai_providers.requests.post")
+    def test_direct_ollama_provider_requires_https_for_remote_hosts(self, mock_post):
+        provider = OllamaProvider(
+            model="qwen2.5-coder:7b",
+            url="http://ollama.example.com:11434",
+        )
+
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            provider.generate("Summarize this safe code.")
+
+        mock_post.assert_not_called()
+
     @patch("llm_provider._cache_put")
     @patch("llm_provider._call_ollama")
     @patch("llm_provider._cache_get", return_value={"ok": True})
@@ -137,6 +192,27 @@ class TestOllamaTaskRouting(unittest.TestCase):
         options = mock_post.call_args.kwargs["json"]["options"]
         self.assertEqual(options["num_predict"], 4096)
         self.assertEqual(options["num_ctx"], 8192)
+
+    @patch("requests.post")
+    @patch("llm_provider._ollama_model_available", return_value=(True, ""))
+    @patch("llm_provider._env")
+    def test_live_suggestions_allow_slow_local_model_response(self, mock_env, _available, mock_post):
+        mock_env.side_effect = lambda name, default="": {
+            "OLLAMA_HOST": "http://localhost:11434",
+            "OLLAMA_NUM_CTX": "8192",
+            "OLLAMA_LIVE_TIMEOUT": "60",
+        }.get(name, default)
+        response = Mock(status_code=200)
+        response.json.return_value = {"response": '{"suggestions": []}'}
+        mock_post.return_value = response
+
+        llm_provider._call_ollama(
+            "live_suggestions",
+            "Analyze this code.",
+            model="qwen2.5-coder:3b",
+        )
+
+        self.assertEqual(mock_post.call_args.kwargs["timeout"], (3, 60))
 
     @patch("ai_providers.requests.post")
     def test_ollama_stream_reports_real_generation_events(self, mock_post):

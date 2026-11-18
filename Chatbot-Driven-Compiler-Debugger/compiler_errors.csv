@@ -1348,3 +1348,55 @@ C:\TOACD_PROJECT_FINAL\TOACD_PROJECT\TOACD_PROJECT\Chatbot-Driven-Compiler-Debug
     5 |     string age = 20;
       |                  ^~
 ",N/A
+2026-11-09 19:29:20,"C:\Users\Arpit\AppData\Local\Temp\shared-exec-vd303ddz\source.cpp:1:10: fatal error: include: No such file or directory
+    1 | #include <include>
+      |          ^~~~~~~~~
+compilation terminated.
+",Unknown,"C:\Users\Arpit\AppData\Local\Temp\shared-exec-vd303ddz\source.cpp:1:10: fatal error: include: No such file or directory
+    1 | #include <include>
+      |          ^~~~~~~~~
+compilation terminated.
+",N/A
+2026-11-09 19:29:54,"C:\Users\Arpit\AppData\Local\Temp\shared-exec-bc92fz81\source.cpp: In function 'int main()':
+C:\Users\Arpit\AppData\Local\Temp\shared-exec-bc92fz81\source.cpp:17:5: error: 'vector' was not declared in this scope
+   17 |     for (int i = 0; i < n; i++) {
+      |     ^~~~~~
+C:\Users\Arpit\AppData\Local\Temp\shared-exec-bc92fz81\source.cpp:2:1: note: 'std::vector' is defined in header '<vector>'; this is probably fixable by adding '#include <vector>'
+    1 | #include <iostream>
+  +++ |+#include <vector>
+    2 | using namespace std;
+C:\Users\Arpit\AppData\Local\Temp\shared-exec-bc92fz81\source.cpp:17:12: error: expected primary-expression before 'int'
+   17 |     for (int i = 0; i < n; i++) {
+      |            ^~~
+C:\Users\Arpit\AppData\Local\Temp\shared-exec-bc92fz81\source.cpp:25:9: error: 'arr' was not declared in this scope
+   25 |                 swap(duplicate[j], duplicate[j + 1]);
+      |         ^  
+C:\Users\Arpit\AppData\Local\Temp\shared-exec-bc92fz81\source.cpp:31:12: error: expected primary-expression before 'int'
+   31 |     for (int i = 0; i < n; i++) {
+      |            ^~~
+C:\Users\Arpit\AppData\Local\Temp\shared-exec-bc92fz81\source.cpp:35:9: error: 'duplicate' was not declared in this scope
+   35 |                     int temp = arr[i] + arr[j] + arr[k];
+      |         ^        
+compilation terminated due to -fmax-errors=5.
+",Unknown,"C:\Users\Arpit\AppData\Local\Temp\shared-exec-bc92fz81\source.cpp: In function 'int main()':
+C:\Users\Arpit\AppData\Local\Temp\shared-exec-bc92fz81\source.cpp:17:5: error: 'vector' was not declared in this scope
+   17 |     for (int i = 0; i < n; i++) {
+      |     ^~~~~~
+C:\Users\Arpit\AppData\Local\Temp\shared-exec-bc92fz81\source.cpp:2:1: note: 'std::vector' is defined in header '<vector>'; this is probably fixable by adding '#include <vector>'
+    1 | #include <iostream>
+  +++ |+#include <vector>
+    2 | using namespace std;
+C:\Users\Arpit\AppData\Local\Temp\shared-exec-bc92fz81\source.cpp:17:12: error: expected primary-expression before 'int'
+   17 |     for (int i = 0; i < n; i++) {
+      |            ^~~
+C:\Users\Arpit\AppData\Local\Temp\shared-exec-bc92fz81\source.cpp:25:9: error: 'arr' was not declared in this scope
+   25 |                 swap(duplicate[j], duplicate[j + 1]);
+      |         ^  
+C:\Users\Arpit\AppData\Local\Temp\shared-exec-bc92fz81\source.cpp:31:12: error: expected primary-expression before 'int'
+   31 |     for (int i = 0; i < n; i++) {
+      |            ^~~
+C:\Users\Arpit\AppData\Local\Temp\shared-exec-bc92fz81\source.cpp:35:9: error: 'duplicate' was not declared in this scope
+   35 |                     int temp = arr[i] + arr[j] + arr[k];
+      |         ^        
+compilation terminated due to -fmax-errors=5.
+",N/A

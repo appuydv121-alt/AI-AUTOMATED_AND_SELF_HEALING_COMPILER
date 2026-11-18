@@ -94,3 +94,66 @@ int main() {
     res = analyze_algorithmic_complexity(code, language="cpp")
 
     assert not any("sync_with_stdio" in item or "std::endl" in item for item in res.optimizations)
+
+
+def test_python_user_duplicate_nested_loops():
+    code = """
+n = int(input())
+arr = [int(x) for x in input().split()]
+found = False
+
+for i in range(n):
+    already_printed = False
+    for k in range(i):
+        if arr[k] == arr[i]:
+            already_printed = True
+    if not already_printed:
+        print(arr[i], end=" ")
+        found = True
+
+if not found:
+    print("No duplicates found")
+
+print()
+"""
+    res = analyze_algorithmic_complexity(code, language="python", stdin_input="5\n2 2 3 4 2", stdout="2")
+    assert res.time_complexity == "O(N²)"
+    assert res.space_complexity == "O(N)"
+    assert any("nested" in step.lower() for step in res.steps_walkthrough)
+
+
+def test_python_linear_loop():
+    code = """
+n = int(input())
+total = 0
+for i in range(n):
+    total += i
+print(total)
+"""
+    res = analyze_algorithmic_complexity(code, language="python")
+    assert res.time_complexity == "O(N)"
+    assert res.space_complexity == "O(1)"
+
+
+def test_python_fixed_bounds():
+    code = """
+total = 0
+for i in range(100):
+    total += i
+print(total)
+"""
+    res = analyze_algorithmic_complexity(code, language="python")
+    assert res.time_complexity == "O(1)"
+
+
+def test_python_recursive_fibonacci():
+    code = """
+def fib(n):
+    if n <= 1:
+        return n
+    return fib(n - 1) + fib(n - 2)
+"""
+    res = analyze_algorithmic_complexity(code, language="python")
+    assert res.time_complexity == "O(2^N)"
+    assert res.space_complexity == "O(N)"
+

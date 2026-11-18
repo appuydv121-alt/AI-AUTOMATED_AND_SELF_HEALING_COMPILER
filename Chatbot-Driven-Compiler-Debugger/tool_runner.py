@@ -9,6 +9,7 @@ Gives agents real tools:
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import statistics
 import subprocess
@@ -49,73 +50,70 @@ def check_tool_available(tool_name: str) -> bool:
 
 def run_sanitizer_analysis(cpp_code: str, timeout: int = 5, stdin_input: str = "") -> list[ToolFinding]:
     """Compile C++ code with address and undefined behavior sanitizers (-fsanitize=address,undefined)."""
+    from compiler_service import compile_and_run
+
+    result = compile_and_run(
+        cpp_code,
+        stdin_input=stdin_input,
+        timeout_compile=timeout,
+        timeout_run=2,
+        language="cpp",
+        sanitizers=True,
+    )
     findings: list[ToolFinding] = []
-    gpp = shutil.which("g++")
-    if not gpp:
+    if result.status_code == -1:
+        return [
+            ToolFinding(
+                tool_name="sandbox-sanitizer",
+                category="sanitizer",
+                severity="WARNING",
+                line=None,
+                message=f"Sanitizer analysis unavailable: {result.stderr}",
+                evidence=result.stderr[:300],
+            )
+        ]
+
+    if result.status_code == 2:
+        error_text = result.stderr or result.stdout
+        findings.append(ToolFinding(
+            tool_name="address-sanitizer-runtime",
+            category="memory",
+            severity="CRITICAL",
+            line=None,
+            message=f"Runtime Sanitizer / Crash Exception: {error_text[:160]}",
+            evidence=error_text[:300],
+        ))
         return findings
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        src = os.path.join(tmpdir, "test.cpp")
-        bin_path = os.path.join(tmpdir, "test_san.exe")
-        with open(src, "w", encoding="utf-8") as f:
-            f.write(cpp_code)
-
-        # 1. Compile with sanitizers + strict warnings
-        cmd = [gpp, "-Wall", "-Wextra", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-g", src, "-o", bin_path]
-        try:
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-            if res.returncode != 0:
-                # If ASan is not supported on this specific Windows toolchain, retry with -Wuninitialized -O1
-                if "unrecognized" in res.stderr.lower() or "not supported" in res.stderr.lower():
-                    cmd_alt = [gpp, "-Wall", "-Wextra", "-Wuninitialized", "-O1", src, "-o", bin_path]
-                    res = subprocess.run(cmd_alt, capture_output=True, text=True, timeout=timeout)
-
-            # Parse compiler warnings/errors
-            for line in res.stderr.splitlines():
-                if "warning:" in line:
-                    findings.append(ToolFinding(
-                        tool_name="gcc-sanitizer",
-                        category="sanitizer",
-                        severity="WARNING",
-                        line=_extract_line_number(line),
-                        message=line.strip(),
-                        evidence=line.strip()
-                    ))
-                elif "error:" in line:
-                    findings.append(ToolFinding(
-                        tool_name="gcc-sanitizer",
-                        category="correctness",
-                        severity="CRITICAL",
-                        line=_extract_line_number(line),
-                        message=line.strip(),
-                        evidence=line.strip()
-                    ))
-
-            # 2. Run binary with standard input to catch runtime sanitizer violations
-            if res.returncode == 0 and os.path.exists(bin_path):
-                run_res = subprocess.run([bin_path], input=stdin_input, capture_output=True, text=True, timeout=2)
-                if run_res.returncode != 0:
-                    err_txt = run_res.stderr or run_res.stdout
-                    findings.append(ToolFinding(
-                        tool_name="address-sanitizer-runtime",
-                        category="memory",
-                        severity="CRITICAL",
-                        line=None,
-                        message=f"Runtime Sanitizer / Crash Exception: {err_txt[:160]}",
-                        evidence=err_txt[:300]
-                    ))
-        except subprocess.TimeoutExpired:
+    for line in result.stderr.splitlines():
+        if "warning:" in line:
             findings.append(ToolFinding(
                 tool_name="gcc-sanitizer",
                 category="sanitizer",
                 severity="WARNING",
-                line=None,
-                message="Sanitizer compilation/execution timed out.",
-                evidence="TimeoutExpired"
+                line=_extract_line_number(line),
+                message=line.strip(),
+                evidence=line.strip(),
             ))
-        except Exception as exc:
-            pass
-
+        elif "error:" in line:
+            findings.append(ToolFinding(
+                tool_name="gcc-sanitizer",
+                category="correctness",
+                severity="CRITICAL",
+                line=_extract_line_number(line),
+                message=line.strip(),
+                evidence=line.strip(),
+            ))
+    if result.status_code == 1 and not findings:
+        category = "security" if "SECURITY GUARDRAIL BLOCKED" in result.stderr else "correctness"
+        findings.append(ToolFinding(
+            tool_name="sandbox-sanitizer",
+            category=category,
+            severity="CRITICAL",
+            line=None,
+            message=result.stderr[:160] or "Sanitizer compilation failed.",
+            evidence=result.stderr[:300],
+        ))
     return findings
 
 

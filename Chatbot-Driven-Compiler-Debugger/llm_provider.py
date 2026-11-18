@@ -8,7 +8,7 @@ generate_task(task, prompt, *, schema=None, provider_name=None, model=None,
     -> (result_dict_or_str, active_provider_name, active_model_name)
 
 active_provider_label(provider_name=None, model=None)
-    -> "ollama • qwen2.5-coder:3b"   (for the UI caption)
+    -> "ollama • qwen2.5-coder:7b"   (for the UI caption)
 """
 from __future__ import annotations
 
@@ -18,6 +18,8 @@ import os
 import time
 from pathlib import Path
 from typing import Any, Callable
+
+from secure_scan import validate_model_endpoint, validate_model_input
 
 # Load .env early so downstream imports see the env vars.
 try:
@@ -46,7 +48,7 @@ def _env(key: str, default: str = "") -> str:
 
 
 # Model defaults — configurable via .env
-_LIVE_MODEL      = _env("LIVE_MODEL",   "qwen2.5-coder:3b")
+_LIVE_MODEL      = _env("LIVE_MODEL",   "qwen2.5-coder:7b")
 _CODEGEN_MODEL   = _env("CODEGEN_MODEL", "qwen2.5-coder:7b")
 _OLLAMA_URL      = _env("OLLAMA_HOST",  "http://localhost:11434").rstrip("/")
 
@@ -54,8 +56,8 @@ _OLLAMA_URL      = _env("OLLAMA_HOST",  "http://localhost:11434").rstrip("/")
 _OLLAMA_MAX_TOKENS: dict[str, int] = {
     "live_suggestions": 400,
     "optimal_code":     int(_env("OLLAMA_CODEGEN_MAX_TOKENS", "4096")),
-    "chat":             512,
-    "reasoning":        512,
+    "chat":             768,
+    "reasoning":        768,
     "default":          512,
 }
 _OLLAMA_TIMEOUT  = 180  # seconds (allows CPU inference to finish reliably)
@@ -107,6 +109,10 @@ def _ollama_model_available(model_name: str) -> tuple[bool, str]:
 
     url = _env("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
     try:
+        validate_model_endpoint(url)
+    except ValueError as exc:
+        return False, str(exc)
+    try:
         resp = requests.get(f"{url}/api/tags", timeout=(2, 5))
         resp.raise_for_status()
         installed = [
@@ -144,7 +150,11 @@ def _call_ollama(
     import requests
 
     ollama_url = _env("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
-    use_model = model or (_env("LIVE_MODEL", "qwen2.5-coder:3b")
+    validate_model_endpoint(ollama_url)
+    is_safe, warning = validate_model_input(prompt)
+    if not is_safe:
+        raise RuntimeError(f"Model request blocked: {warning}")
+    use_model = model or (_env("LIVE_MODEL", "qwen2.5-coder:7b")
                           if task == "live_suggestions"
                           else _env("CODEGEN_MODEL", "qwen2.5-coder:7b"))
 
@@ -172,14 +182,16 @@ def _call_ollama(
         payload["format"] = "json"
 
     task_timeouts = {
-        "live_suggestions": 3,
-        "chat": 45,
-        "security_audit": 30,
-        "efficiency_profile": 30,
-        "test_generation": 30,
-        "optimal_code": 60,
+        "live_suggestions": int(_env("OLLAMA_LIVE_TIMEOUT", "180")),
+        "chat": int(_env("OLLAMA_CHAT_TIMEOUT", "180")),
+        "security_audit": int(_env("OLLAMA_SECURITY_TIMEOUT", "150")),
+        "efficiency_profile": int(_env("OLLAMA_EFFICIENCY_TIMEOUT", "150")),
+        "test_generation": int(_env("OLLAMA_TESTGEN_TIMEOUT", "180")),
+        "optimal_code": int(_env("OLLAMA_OPTIMAL_TIMEOUT", "300")),
     }
-    effective_timeout = task_timeouts.get(task, 30)
+    effective_timeout = task_timeouts.get(task, 90)
+    if len(prompt) > 4000:
+        effective_timeout = max(effective_timeout, 300)
 
     _report(progress_callback, {"stage": "requesting"})
     try:
@@ -210,30 +222,35 @@ def _call_ollama(
 
     output: list[str] = []
     char_count = 0
-    for raw_line in response.iter_lines(decode_unicode=True):
-        if not raw_line:
-            continue
-        if isinstance(raw_line, bytes):
-            raw_line = raw_line.decode("utf-8", errors="replace")
-        try:
-            data = json.loads(raw_line)
-        except (TypeError, json.JSONDecodeError):
-            continue
-        fragment = str(data.get("response", ""))
-        if fragment:
-            output.append(fragment)
-            char_count += len(fragment)
-            _report(progress_callback, {
-                "stage": "generating",
-                "characters": char_count,
-                "text": fragment,
-            })
-        if data.get("done"):
-            _report(progress_callback, {
-                "stage": "done",
-                "characters": char_count,
-                "tokens": data.get("eval_count"),
-            })
+    try:
+        for raw_line in response.iter_lines(decode_unicode=True):
+            if not raw_line:
+                continue
+            if isinstance(raw_line, bytes):
+                raw_line = raw_line.decode("utf-8", errors="replace")
+            try:
+                data = json.loads(raw_line)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            fragment = str(data.get("response", ""))
+            if fragment:
+                output.append(fragment)
+                char_count += len(fragment)
+                _report(progress_callback, {
+                    "stage": "generating",
+                    "characters": char_count,
+                    "text": fragment,
+                })
+            if data.get("done"):
+                _report(progress_callback, {
+                    "stage": "done",
+                    "characters": char_count,
+                    "tokens": data.get("eval_count"),
+                })
+    except requests.exceptions.Timeout:
+        raise RuntimeError(f"Ollama streaming timed out after {effective_timeout}s")
+    except requests.exceptions.ConnectionError:
+        raise RuntimeError("Ollama connection interrupted during streaming")
     return "".join(output).strip()
 
 
@@ -265,9 +282,13 @@ def generate_task(
     if selected_provider != "ollama":
         raise RuntimeError("Only the Ollama provider is enabled.")
 
+    is_safe, warning = validate_model_input(prompt)
+    if not is_safe:
+        raise RuntimeError(f"Model request blocked: {warning}")
+
     default_ollama = (
         _env("CODEGEN_MODEL", "qwen2.5-coder:7b") if task == "optimal_code"
-        else _env("LIVE_MODEL", "qwen2.5-coder:3b")
+        else _env("LIVE_MODEL", "qwen2.5-coder:7b")
     )
     eff_ollama_model = ollama_model or model or default_ollama
 
@@ -295,7 +316,7 @@ def generate_task(
 
 def active_provider_label(provider_name: str | None = None, model: str | None = None) -> str:
     """Return UI label string for local Ollama."""
-    live_model = _env("LIVE_MODEL", "qwen2.5-coder:3b")
+    live_model = _env("LIVE_MODEL", "qwen2.5-coder:7b")
     use_model = model or live_model
     return f"ollama • {use_model}"
 

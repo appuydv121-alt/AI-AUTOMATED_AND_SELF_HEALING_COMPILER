@@ -7,6 +7,7 @@ from typing import Any, Callable, Iterable
 
 import requests
 
+from secure_scan import validate_model_endpoint, validate_model_input
 
 _ENV_KEYS = {
     "groq": "GROQ_API_KEY",
@@ -47,6 +48,21 @@ def _read_env(name: str, default: str = "") -> str:
 
 
 def _http_post(url: str, *, json_payload: dict[str, Any] | None = None, headers: dict[str, str] | None = None, timeout: float | tuple[float, float] = 30) -> requests.Response:
+    if json_payload is not None:
+        prompt_parts = [
+            value for value in (json_payload.get("prompt"), json_payload.get("system"))
+            if isinstance(value, str)
+        ]
+        messages = json_payload.get("messages", [])
+        if isinstance(messages, list):
+            prompt_parts.extend(
+                message["content"]
+                for message in messages
+                if isinstance(message, dict) and isinstance(message.get("content"), str)
+            )
+        is_safe, warning = validate_model_input("\n".join(prompt_parts))
+        if not is_safe:
+            raise RuntimeError(f"Model request blocked: {warning}")
     return requests.post(url, json=json_payload, headers=headers, timeout=timeout)
 
 
@@ -96,6 +112,10 @@ class OllamaProvider(LLMProvider):
             return False
 
     def generate(self, prompt: str, system: str | None = None, *, json_mode: bool = False, temperature: float = 0.1, max_tokens: int = 512, timeout: int = 20, progress_callback: Callable[[dict[str, Any]], None] | None = None) -> str:
+        validate_model_endpoint(self.url)
+        is_safe, warning = validate_model_input(f"{system or ''}\n{prompt}")
+        if not is_safe:
+            raise RuntimeError(f"Model request blocked: {warning}")
         payload: dict[str, Any] = {
             "model": self.model,
             "prompt": prompt,

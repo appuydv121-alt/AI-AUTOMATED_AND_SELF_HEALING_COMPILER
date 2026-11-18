@@ -79,6 +79,21 @@ def test_quality_gate_does_not_trade_off_security_for_efficiency():
     assert not _quality_does_not_regress(candidate, reference)
 
 
+def test_quality_gate_does_not_trade_severity_for_equal_check_score():
+    candidate = {
+        "security_score": 98.0,
+        "security_risk_weight": 35.0,
+        "efficiency_score": 100.0,
+    }
+    reference = {
+        "security_score": 98.0,
+        "security_risk_weight": 15.0,
+        "efficiency_score": 100.0,
+    }
+
+    assert not _quality_does_not_regress(candidate, reference)
+
+
 def test_deterministic_hardening_does_not_add_cosmetic_io_changes():
     code = """#include <iostream>
 using namespace std;

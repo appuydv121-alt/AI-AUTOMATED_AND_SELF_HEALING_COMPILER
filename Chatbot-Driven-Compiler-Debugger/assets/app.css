@@ -84,8 +84,9 @@
 
 iframe[src*="streamlit_ace"] {
   border-radius: 10px !important;
-  box-shadow: 0 2px 8px light-dark(rgba(15, 23, 42, 0.06), rgba(0, 0, 0, 0.3)) !important;
-  border: 1px solid var(--ui-border) !important;
+  box-shadow: none !important;
+  border: none !important;
+  outline: none !important;
 }
 
 .ui-panel-anchor {

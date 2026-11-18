@@ -1,9 +1,15 @@
 import os
+import shutil
 import sys
+import subprocess
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from compiler_service import compile_and_run, RunResult
+
+
+def _gpp_ready():
+    return bool(shutil.which("g++") or shutil.which("clang++"))
 
 
 class TestCompilerServiceStdin(unittest.TestCase):
@@ -20,6 +26,7 @@ class TestCompilerServiceStdin(unittest.TestCase):
         self.assertFalse(result.timed_out)
         self.assertFalse(result.output_limited)
 
+    @unittest.skipUnless(_gpp_ready(), "g++ compiler is not available")
     def test_two_sum_sample_with_stdin(self):
         code = """#include <iostream>
 #include <vector>
@@ -52,6 +59,7 @@ int main() {
         self.assertIn("Pair: 1 + 6 = 7", res.stdout)
         self.assertGreaterEqual(res.execution_time, 0.0)
 
+    @unittest.skipUnless(_gpp_ready(), "g++ compiler is not available")
     def test_stdin_input_update_produces_new_output(self):
         code = """#include <iostream>
 using namespace std;
@@ -72,6 +80,7 @@ int main() {
         self.assertEqual(res2.status_code, 0)
         self.assertIn("81", res2.stdout)
 
+    @unittest.skipUnless(_gpp_ready(), "g++ compiler is not available")
     def test_timeout_on_infinite_loop(self):
         code = """int main() {
     while (true) {}
@@ -82,6 +91,7 @@ int main() {
         self.assertTrue(res.timed_out)
         self.assertIn("Execution timed out. Your program may be waiting for more input or stuck in an infinite loop.", res.stderr)
 
+    @unittest.skipUnless(_gpp_ready(), "g++ compiler is not available")
     def test_timeout_preserves_output_written_before_timeout(self):
         code = """#include <iostream>
 int main() {
@@ -96,6 +106,7 @@ int main() {
         self.assertIn("0", res.stdout)
         self.assertIn("9", res.stdout)
 
+    @unittest.skipUnless(_gpp_ready(), "g++ compiler is not available")
     def test_large_output_is_capped_without_stopping_program(self):
         code = """#include <iostream>
 #include <string>
@@ -111,6 +122,7 @@ int main() {
         self.assertLessEqual(len(res.stdout.encode("utf-8")), 1024)
         self.assertIn("output beyond this amount was discarded", res.stderr)
 
+    @unittest.skipUnless(_gpp_ready(), "g++ compiler is not available")
     def test_non_zero_exit_code(self):
         code = """int main() {
     return 42;
@@ -120,6 +132,7 @@ int main() {
         self.assertEqual(res.exit_code, 42)
         self.assertIn("exit code 42", res.stderr)
 
+    @unittest.skipUnless(_gpp_ready(), "g++ compiler is not available")
     def test_very_large_input_truncated(self):
         code = """#include <iostream>
 #include <string>

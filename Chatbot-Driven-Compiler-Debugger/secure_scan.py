@@ -6,7 +6,9 @@ exfiltration, path traversal, shellcode, and memory safety vulnerabilities
 WITHOUT executing the code.
 """
 
+import os
 import re
+from urllib.parse import urlsplit
 
 # Comprehensive threat patterns matrix
 # Note: Existing keys and message prefixes (CRITICAL, WARNING, PERFORMANCE, STANDARD, RISK)
@@ -27,6 +29,12 @@ SECURITY_PATTERNS = {
     r'\bpopen\s*\(': "CRITICAL: 'popen()' opens a pipe to a shell command, which is vulnerable to injection attacks.",
     r'\b(eval|exec)\s*\(': "CRITICAL: Arbitrary dynamic code evaluation ('eval'/'exec') detected. Unsafe code injection risk.",
     r'\b(subprocess\.(call|Popen|run|check_output)|os\.system|os\.popen|os\.spawn)\b': "CRITICAL: Host OS command execution via subprocess or OS API detected.",
+    r"\b(?:require\s*\(\s*['\"](?:node:)?child_process['\"]\s*\)|from\s+['\"](?:node:)?child_process['\"]|\bchild_process\s*\.\s*(?:exec|execSync|spawn|spawnSync|fork|execFile|execFileSync)\s*\()":
+        "CRITICAL: Node.js child-process execution is blocked.",
+    r'\bnew\s+Function\s*\(': "CRITICAL: Dynamic code construction is blocked.",
+    r'\b(?:requests|urllib\.request)\s*\.\s*(?:get|post|put|patch|delete|urlopen)\s*\(': "CRITICAL: Python network access is blocked.",
+    r'\b(?:fetch|axios\.(?:get|post|put|patch|delete)|https?\.request)\s*\(': "CRITICAL: JavaScript network access is blocked.",
+    r'\b(?:Deno\.Command|Bun\.(?:spawn|spawnSync))\s*\(': "CRITICAL: Runtime command execution is blocked.",
     r'\b(shutil\.rmtree|os\.remove|os\.unlink)\s*\(': "CRITICAL: Filesystem deletion API detected.",
     r'\bexecl\s*\(': "CRITICAL: The 'execl' function poses command injection risks. Validate all inputs before execution.",
     r'\bexecle\s*\(': "CRITICAL: The 'execle' function poses command injection risks.",
@@ -100,6 +108,12 @@ HOST_EXECUTION_BLOCKLIST = {
     r'\bpopen\s*\(': "CRITICAL: 'popen()' opens a pipe to a shell command, which is vulnerable to injection attacks.",
     r'\b(eval|exec)\s*\(': "CRITICAL: Arbitrary dynamic code evaluation ('eval'/'exec') detected. Unsafe code injection risk.",
     r'\b(subprocess\.(call|Popen|run|check_output)|os\.system|os\.popen|os\.spawn)\b': "CRITICAL: Host OS command execution via subprocess or OS API detected.",
+    r"\b(?:require\s*\(\s*['\"](?:node:)?child_process['\"]\s*\)|from\s+['\"](?:node:)?child_process['\"]|\bchild_process\s*\.\s*(?:exec|execSync|spawn|spawnSync|fork|execFile|execFileSync)\s*\()":
+        "CRITICAL: Node.js child-process execution is blocked.",
+    r'\bnew\s+Function\s*\(': "CRITICAL: Dynamic code construction is blocked.",
+    r'\b(?:requests|urllib\.request)\s*\.\s*(?:get|post|put|patch|delete|urlopen)\s*\(': "CRITICAL: Python network access is blocked.",
+    r'\b(?:fetch|axios\.(?:get|post|put|patch|delete)|https?\.request)\s*\(': "CRITICAL: JavaScript network access is blocked.",
+    r'\b(?:Deno\.Command|Bun\.(?:spawn|spawnSync))\s*\(': "CRITICAL: Runtime command execution is blocked.",
     r'\b(shutil\.rmtree|os\.remove|os\.unlink)\s*\(': "CRITICAL: Filesystem deletion API detected.",
     r'\bexecl\s*\(': "CRITICAL: The 'execl' function poses command injection risks. Validate all inputs before execution.",
     r'\bexecle\s*\(': "CRITICAL: The 'execle' function poses command injection risks.",
@@ -146,6 +160,17 @@ HOST_EXECUTION_BLOCKLIST = {
     r'#\s*include\s+__FILE__': "CRITICAL: Recursive self-inclusion (__FILE__) triggers preprocessor denial-of-service.",
 }
 
+MODEL_INPUT_BLOCKLIST = {
+    r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----":
+        "A private key was detected in the source; remove it before sending code to the model.",
+    r"\bAKIA[0-9A-Z]{16}\b":
+        "An AWS access key was detected in the source; remove it before sending code to the model.",
+    r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b":
+        "A GitHub token was detected in the source; remove it before sending code to the model.",
+    r"(?i)\b(?:api[_-]?key|secret[_-]?key|access[_-]?token|password)\b\s*[:=]\s*(['\"])[^'\"\r\n]{8,}\1":
+        "A likely credential assignment was detected; remove it before sending code to the model.",
+}
+
 
 def run_security_guardrail(code_snippet):
     """
@@ -160,6 +185,46 @@ def run_security_guardrail(code_snippet):
             return False, warning
 
     return True, "Code looks safe."
+
+
+MAX_MODEL_PROMPT_BYTES = int(os.environ.get("MAX_MODEL_PROMPT_BYTES", 2 * 1024 * 1024))  # 2 MB default (supports 10,000+ lines)
+
+
+def validate_model_input(prompt: str) -> tuple[bool, str]:
+    """Block model prompts containing dangerous code patterns or recognizable secrets."""
+    if len(prompt.encode("utf-8")) > MAX_MODEL_PROMPT_BYTES:
+        limit_mb = MAX_MODEL_PROMPT_BYTES // (1024 * 1024)
+        return False, f"Model prompt exceeds the {limit_mb} MB safety limit."
+    is_safe, warning = run_security_guardrail(prompt)
+    if not is_safe:
+        return False, warning
+    for pattern, message in MODEL_INPUT_BLOCKLIST.items():
+        if re.search(pattern, prompt):
+            return False, message
+    return True, "Model input looks safe."
+
+
+def validate_model_endpoint(url: str) -> None:
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in ("", "/")
+    ):
+        raise ValueError("OLLAMA_HOST must be a base HTTP or HTTPS URL without credentials or a path.")
+    if parsed.scheme != "https" and parsed.hostname.lower() not in {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }:
+        raise ValueError(
+            "Code will not be sent to a remote Ollama endpoint over HTTP. "
+            "Use HTTPS or a localhost endpoint."
+        )
 
 
 def scan_all_security_issues(code_snippet):
@@ -196,15 +261,34 @@ def get_security_summary(code_snippet):
     }
 
 
+EFFICIENCY_CHECKS_BY_LANGUAGE = {
+    "python": (
+        "nested_loop_depth",
+        "string_concatenation_in_loop",
+        "bare_except",
+        "unmemoized_recursion",
+    ),
+    "sql": ("nested_selects", "unbounded_select_star", "cartesian_product"),
+    "cpp": (
+        "nested_loop_depth",
+        "endl_in_loop",
+        "container_parameter_by_value",
+        "quadratic_sort",
+        "sort_inside_loop",
+        "slow_cin_io",
+        "unmemoized_recursion",
+    ),
+    "other": ("nested_loop_depth",),
+}
+
+
 def compute_code_quality_metrics(code_snippet: str, language: str = "cpp") -> dict:
     """
-    Computes dynamic, executable percentage scores for code security and efficiency:
-      - insecure_pct: Estimated risk percentage (0% = completely safe, 100% = critical hazard)
-      - security_score: Cleanliness score (100% = clean)
-      - inefficient_pct: Estimated inefficiency percentage (0% = optimal, 100% = heavily inefficient)
-      - efficiency_score: Efficiency score (100% = optimal)
-      - deductions: Structured list of explainable deductions with:
-          category, title, penalty, why_deducted, how_to_reach_100, code_fix
+    Reports the fraction of configured static checks that did not flag the source.
+    These are scan results, not probabilities or measurements of overall security
+    or runtime efficiency.
+    Deductions include a percentage-point impact based on the share of checks that
+    the finding flagged.
     """
     lines = [line.strip() for line in code_snippet.splitlines() if line.strip() and not line.strip().startswith(("//", "#", "/*", "*", "--"))]
     total_loc = max(1, len(lines))
@@ -227,7 +311,6 @@ def compute_code_quality_metrics(code_snippet: str, language: str = "cpp") -> di
             deductions.append({
                 "category": "Security",
                 "severity": "CRITICAL",
-                "penalty": 35.0,
                 "title": f"Critical Security Threat ({line_str}{msg.split(':')[0]})",
                 "why_deducted": msg,
                 "how_to_reach_100": "Remove dynamic shell execution, buffer-overflow primitives, or network calls. Use sandboxed memory-safe constructs.",
@@ -238,7 +321,6 @@ def compute_code_quality_metrics(code_snippet: str, language: str = "cpp") -> di
             deductions.append({
                 "category": "Security",
                 "severity": "WARNING",
-                "penalty": 15.0,
                 "title": f"Security Advisory ({line_str}Risky API)",
                 "why_deducted": msg,
                 "how_to_reach_100": "Modernize the code by replacing deprecated C-style library functions with standard C++ / safe language abstractions.",
@@ -249,21 +331,37 @@ def compute_code_quality_metrics(code_snippet: str, language: str = "cpp") -> di
             deductions.append({
                 "category": "Security",
                 "severity": "RISK",
-                "penalty": 5.0,
                 "title": f"Security Risk ({line_str}Unbounded Input)",
                 "why_deducted": msg,
                 "how_to_reach_100": "Specify explicit buffer bounds or use safe stream extractors with input validation.",
                 "code_fix": "cin >> setw(buffer_size) >> buffer;"
             })
 
-    threat_weight = (critical_count * 35.0) + (warning_count * 15.0) + (risk_count * 5.0)
-    insecure_pct = min(100.0, float(threat_weight))
-    security_score = max(0.0, 100.0 - insecure_pct)
+    security_checks_total = len(SECURITY_PATTERNS)
+    security_checks_flagged = len(sec_issues)
+    security_score = (
+        100.0 * (security_checks_total - security_checks_flagged) / security_checks_total
+        if security_checks_total
+        else 100.0
+    )
+    insecure_pct = 100.0 - security_score
+    security_risk_weight = (
+        critical_count * 35.0 + warning_count * 15.0 + risk_count * 5.0
+    )
 
     # 2. Multi-Language Algorithmic Efficiency Analysis
     inefficiencies = []
-    penalty = 0.0
     lang_lower = (language or "").lower()
+    is_cpp = lang_lower in {"c", "cpp", "c++", "cxx"}
+    if "py" in lang_lower:
+        efficiency_profile = "python"
+    elif "sql" in lang_lower:
+        efficiency_profile = "sql"
+    elif is_cpp:
+        efficiency_profile = "cpp"
+    else:
+        efficiency_profile = "other"
+    efficiency_checks_total = len(EFFICIENCY_CHECKS_BY_LANGUAGE[efficiency_profile])
 
     # Detect true loop nesting depth across Python, C++, JavaScript, TypeScript, SQL
     loop_nesting = 0
@@ -294,28 +392,22 @@ def compute_code_quality_metrics(code_snippet: str, language: str = "cpp") -> di
             loop_nesting = min(c_loops, 2) if c_loops >= 2 else c_loops
 
     if loop_nesting >= 3:
-        p = 35.0
-        penalty += p
         note = "Deeply nested loops detected (potential O(n³) or higher complexity)"
         inefficiencies.append(note)
         deductions.append({
             "category": "Efficiency",
             "severity": "WARNING",
-            "penalty": p,
             "title": "Deeply Nested Loops (O(n³) Complexity)",
             "why_deducted": "Triple-nested loops scale cubically with data size. At n=1,000 items, O(n³) performs 1,000,000,000 operations, triggering severe execution timeouts.",
             "how_to_reach_100": "Restructure data using hash maps (unordered_map / dict), lookup tables, or prefix arrays to eliminate the innermost iteration loops.",
             "code_fix": "// Refactor inner loop to O(1) hash map lookup: unordered_map<int, int> lookup;"
         })
     elif loop_nesting == 2:
-        p = 20.0
-        penalty += p
         note = "Nested loops detected (potential O(n²) complexity)"
         inefficiencies.append(note)
         deductions.append({
             "category": "Efficiency",
             "severity": "WARNING",
-            "penalty": p,
             "title": "Nested Loops (O(n²) Complexity)",
             "why_deducted": "Nested loops examine pairs of elements (quadratic time). On inputs larger than 10,000 items, this causes noticeable latency degradation.",
             "how_to_reach_100": "If searching or matching elements, pre-index items in a hash table or sort the collection and use two pointers to reach O(n log n) or O(n).",
@@ -326,14 +418,11 @@ def compute_code_quality_metrics(code_snippet: str, language: str = "cpp") -> di
     if "py" in lang_lower:
         # String concatenation inside loops
         if loop_nesting > 0 and re.search(r'(\+=|\+)\s*["\']', code_snippet):
-            p = 10.0
-            penalty += p
             note = "Repeated string concatenation inside loop (creates intermediate objects; prefer str.join())"
             inefficiencies.append(note)
             deductions.append({
                 "category": "Efficiency",
                 "severity": "WARNING",
-                "penalty": p,
                 "title": "String Concatenation in Loop",
                 "why_deducted": "In Python, strings are immutable. Doing '+=' inside a loop allocates memory and copies the entire string on every iteration.",
                 "how_to_reach_100": "Collect string chunks into a list inside the loop and combine them at the end with ''.join(parts).",
@@ -341,14 +430,11 @@ def compute_code_quality_metrics(code_snippet: str, language: str = "cpp") -> di
             })
         # Bare except
         if re.search(r'^\s*except\s*:', code_snippet, re.MULTILINE):
-            p = 10.0
-            penalty += p
             note = "Bare 'except:' catches KeyboardInterrupt & SystemExit (specify exception classes)"
             inefficiencies.append(note)
             deductions.append({
                 "category": "Efficiency",
                 "severity": "WARNING",
-                "penalty": p,
                 "title": "Bare 'except:' Exception Handler",
                 "why_deducted": "A bare 'except:' catches all exceptions indiscriminately, suppressing KeyboardInterrupt (Ctrl+C), SystemExit, and masking typos.",
                 "how_to_reach_100": "Catch specific exceptions or 'except Exception as e:' to permit runtime control signals to propagate.",
@@ -359,14 +445,11 @@ def compute_code_quality_metrics(code_snippet: str, language: str = "cpp") -> di
         for fn in py_funcs:
             calls = len(re.findall(rf'\b{fn}\s*\(', code_snippet))
             if calls > 1 and "cache" not in code_snippet and "memo" not in code_snippet:
-                p = 15.0
-                penalty += p
                 note = f"Recursive Python function '{fn}' without memoization or @lru_cache"
                 inefficiencies.append(note)
                 deductions.append({
                     "category": "Efficiency",
                     "severity": "WARNING",
-                    "penalty": p,
                     "title": f"Unmemoized Recursion in '{fn}'",
                     "why_deducted": f"Recursive function '{fn}' calls itself repeatedly without caching overlapping subproblems, triggering exponential O(2ⁿ) execution.",
                     "how_to_reach_100": "Import functools and decorate the function with @functools.lru_cache(None) or maintain a memo dictionary.",
@@ -376,14 +459,11 @@ def compute_code_quality_metrics(code_snippet: str, language: str = "cpp") -> di
     elif "sql" in lang_lower:
         # Unbounded SELECT * without LIMIT
         if re.search(r'\bSELECT\s+\*\s+FROM\b', code_snippet, re.IGNORECASE) and not re.search(r'\bLIMIT\b', code_snippet, re.IGNORECASE):
-            p = 15.0
-            penalty += p
             note = "Unbounded 'SELECT *' without LIMIT (may trigger full table scans on large tables)"
             inefficiencies.append(note)
             deductions.append({
                 "category": "Efficiency",
                 "severity": "WARNING",
-                "penalty": p,
                 "title": "Unbounded 'SELECT *' Query",
                 "why_deducted": "SELECT * queries without a LIMIT clause force database engines to scan every row and return unneeded columns across the network.",
                 "how_to_reach_100": "Specify only the explicit columns needed and add a LIMIT clause.",
@@ -391,30 +471,24 @@ def compute_code_quality_metrics(code_snippet: str, language: str = "cpp") -> di
             })
         # Cartesian join
         if re.search(r'\bFROM\s+[a-zA-Z_]\w*\s*,\s*[a-zA-Z_]\w*', code_snippet, re.IGNORECASE):
-            p = 20.0
-            penalty += p
             note = "Implicit cross join / Cartesian product detected in FROM clause"
             inefficiencies.append(note)
             deductions.append({
                 "category": "Efficiency",
                 "severity": "WARNING",
-                "penalty": p,
                 "title": "Cartesian Product / Implicit Cross Join",
                 "why_deducted": "Specifying multiple tables separated by commas without an explicit ON condition calculates the full mathematical Cartesian product (N × M rows).",
                 "how_to_reach_100": "Replace comma separation with an explicit INNER JOIN ... ON tableA.id = tableB.ref_id clause.",
                 "code_fix": "FROM table_a INNER JOIN table_b ON table_a.user_id = table_b.id"
             })
-    else:
+    elif is_cpp:
         # C++ / C optimizations
         if re.search(r'\bendl\b', code_snippet) and loop_nesting > 0:
-            p = 10.0
-            penalty += p
             note = "std::endl used inside loop (flushes output buffer each iteration; prefer '\\n')"
             inefficiencies.append(note)
             deductions.append({
                 "category": "Efficiency",
                 "severity": "WARNING",
-                "penalty": p,
                 "title": "std::endl Output Buffer Flushing in Loop",
                 "why_deducted": "std::endl prints a newline AND executes an immediate OS stream flush (fflush). Inside a loop, this creates massive I/O stall cycles.",
                 "how_to_reach_100": "Use '\\n' instead of endl to allow the OS stream buffer to batch writes efficiently.",
@@ -422,14 +496,11 @@ def compute_code_quality_metrics(code_snippet: str, language: str = "cpp") -> di
             })
 
         if re.search(r'\b(vector|string|map|set)\s+[a-zA-Z0-9_]+\s*[,)]', code_snippet):
-            p = 15.0
-            penalty += p
             note = "Container parameter passed by value (incurs copy overhead; prefer const reference)"
             inefficiencies.append(note)
             deductions.append({
                 "category": "Efficiency",
                 "severity": "WARNING",
-                "penalty": p,
                 "title": "Container Parameter Passed by Value",
                 "why_deducted": "Passing STL containers (e.g. vector, string) by value triggers a full heap copy on each function call.",
                 "how_to_reach_100": "Pass heavy containers by const reference ('const vector<T>&') to enable zero-copy reads.",
@@ -438,14 +509,11 @@ def compute_code_quality_metrics(code_snippet: str, language: str = "cpp") -> di
 
         # Quadratic Sorting check (Bubble / Selection Sort)
         if re.search(r'\bswap\s*\(\s*[a-zA-Z_]\w*\[[^\]]+\]\s*,\s*[a-zA-Z_]\w*\[[^\]]+\]\s*\)', code_snippet) and loop_nesting > 1:
-            p = 25.0
-            penalty += p
             note = "Quadratic sorting detected (nested loop with element swaps; prefer std::sort)"
             inefficiencies.append(note)
             deductions.append({
                 "category": "Efficiency",
                 "severity": "WARNING",
-                "penalty": p,
                 "title": "Quadratic Sorting Algorithm (O(N²) Bubble/Selection Sort)",
                 "why_deducted": "Nested loops swapping adjacent or indexed array elements run in O(N²) quadratic time, causing severe CPU degradation on large arrays.",
                 "how_to_reach_100": "Replace manual nested sorting loops with C++ std::sort() from <algorithm>, which runs in optimal O(N log N) time.",
@@ -457,29 +525,23 @@ def compute_code_quality_metrics(code_snippet: str, language: str = "cpp") -> di
             from complexity_engine import analyze_algorithmic_complexity
             comp = analyze_algorithmic_complexity(code_snippet, language="cpp")
             if "N²" in comp.time_complexity or "sort inside loop" in str(comp.hotspots):
-                p = 25.0
-                penalty += p
                 note = "Redundant sort inside loop (causes O(N² log N) complexity; hoist sort outside)"
                 inefficiencies.append(note)
                 deductions.append({
                     "category": "Efficiency",
                     "severity": "WARNING",
-                    "penalty": p,
                     "title": "Redundant Sorting Inside Iteration Loop (O(N² log N))",
                     "why_deducted": "Calling sort() inside a loop repeatedly re-sorts already ordered data, ballooning complexity from O(N log N) to O(N² log N).",
                     "how_to_reach_100": "Move sort() immediately before the loop so the dataset is sorted only once.",
                     "code_fix": "sort(arr.begin(), arr.end());\nfor (int i = 0; i < n; i++) { ... }"
                 })
 
-        if "c" in lang_lower and "cin" in code_snippet and "ios_base::sync_with_stdio" not in code_snippet:
-            p = 10.0
-            penalty += p
+        if "cin" in code_snippet and "ios_base::sync_with_stdio" not in code_snippet:
             note = "Unbuffered standard I/O (missing ios_base::sync_with_stdio(false))"
             inefficiencies.append(note)
             deductions.append({
                 "category": "Efficiency",
                 "severity": "WARNING",
-                "penalty": p,
                 "title": "Unbuffered Standard I/O (C++ Stream Sync Overhead)",
                 "why_deducted": "By default, C++ std::cin synchronizes with C stdio streams (scanf/printf) after every character, adding significant CPU overhead on large inputs.",
                 "how_to_reach_100": "Add fast I/O optimization at the start of your main() function to untie C++ streams from C stdio.",
@@ -491,14 +553,11 @@ def compute_code_quality_metrics(code_snippet: str, language: str = "cpp") -> di
             if f not in ("main", "if", "for", "while", "switch"):
                 pattern = rf'\b{f}\s*\('
                 if len(re.findall(pattern, code_snippet)) > 1 and "memo" not in code_snippet.lower() and "dp" not in code_snippet.lower():
-                    p = 15.0
-                    penalty += p
                     note = f"Recursive function '{f}' without apparent memoization"
                     inefficiencies.append(note)
                     deductions.append({
                         "category": "Efficiency",
                         "severity": "WARNING",
-                        "penalty": p,
                         "title": f"Recursive Function '{f}' without Memoization",
                         "why_deducted": f"Function '{f}' calls itself recursively without apparent memoization or dynamic programming cache, leading to exponential runtime.",
                         "how_to_reach_100": "Store already computed return values in a table (e.g. vector<int> memo or unordered_map) before recurring.",
@@ -506,14 +565,30 @@ def compute_code_quality_metrics(code_snippet: str, language: str = "cpp") -> di
                     })
                     break
 
-    inefficient_pct = min(100.0, max(0.0, penalty))
-    efficiency_score = max(0.0, 100.0 - inefficient_pct)
+    efficiency_checks_flagged = min(len(inefficiencies), efficiency_checks_total)
+    efficiency_score = (
+        100.0 * (efficiency_checks_total - efficiency_checks_flagged) / efficiency_checks_total
+        if efficiency_checks_total
+        else 100.0
+    )
+    inefficient_pct = 100.0 - efficiency_score
+    for deduction in deductions:
+        if deduction["category"] == "Security":
+            deduction["penalty"] = 100.0 / security_checks_total
+        elif deduction["category"] == "Efficiency":
+            deduction["penalty"] = 100.0 / efficiency_checks_total
 
     return {
         "security_score": round(security_score, 1),
         "insecure_pct": round(insecure_pct, 1),
         "efficiency_score": round(efficiency_score, 1),
         "inefficient_pct": round(inefficient_pct, 1),
+        "security_checks_total": security_checks_total,
+        "security_checks_flagged": security_checks_flagged,
+        "security_risk_weight": security_risk_weight,
+        "efficiency_checks_total": efficiency_checks_total,
+        "efficiency_checks_flagged": efficiency_checks_flagged,
+        "score_basis": "configured_static_checks",
         "critical_threats": critical_count,
         "advisory_threats": warning_count + risk_count,
         "inefficiency_notes": inefficiencies,
