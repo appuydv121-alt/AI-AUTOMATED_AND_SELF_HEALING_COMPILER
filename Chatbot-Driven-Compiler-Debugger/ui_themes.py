@@ -9,6 +9,7 @@ Goals:
 """
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 THEMES = {
     # Studio Light: World-class Apple / Stripe / Linear high-contrast light IDE theme.
@@ -981,32 +982,42 @@ def setup_ui(model_name: str | None = None, provider: str | None = None) -> dict
     theme = get_theme()
     editor_ace_theme = f"ace/theme/{theme['editor']}"
     st.markdown(f"<style>{_vars_css(theme)}{_BASE_CSS}</style>", unsafe_allow_html=True)
-    # Inject chosen ace theme into window and strip all black/dark outer lines from editor
-    st.html(f'<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" '
-            f'onload="try{{'
-            f'window.parent.__aceThemeName=\'{editor_ace_theme}\';'
-            f'const cleanBorders = () => {{'
-            f'  const doc = window.parent ? window.parent.document : document;'
-            f'  doc.querySelectorAll(\'iframe[src*=\"streamlit_ace\"], iframe[title*=\"streamlit_ace\"], div[data-testid=\"stCustomComponentV1\"] iframe\').forEach(f => {{'
-            f'    f.style.setProperty(\'border\', \'none\', \'important\');'
-            f'    f.style.setProperty(\'outline\', \'none\', \'important\');'
-            f'    f.style.setProperty(\'box-shadow\', \'none\', \'important\');'
-            f'    try {{'
-            f'      const fdoc = f.contentDocument;'
-            f'      if(fdoc && fdoc.head) {{'
-            f'        let s = fdoc.getElementById(\'clean-ace-borders\');'
-            f'        if(!s) {{'
-            f'          s = fdoc.createElement(\'style\');'
-            f'          s.id = \'clean-ace-borders\';'
-            f'          fdoc.head.appendChild(s);'
-            f'        }}'
-            f'        s.textContent = \'html, body, #root, .MuiPaper-root, .MuiBox-root {{ background: transparent !important; border: none !important; box-shadow: none !important; outline: none !important; margin: 0 !important; }} .ace_editor {{ border: none !important; outline: none !important; box-shadow: none !important; }}\';'
-            f'      }}'
-            f'    }} catch(e) {{}}'
-            f'  }});'
-            f'}};'
-            f'cleanBorders();'
-            f'if(!window.__cleanAceInterval) {{ window.__cleanAceInterval = setInterval(cleanBorders, 250); }}'
-            f'}}catch(e){{}}this.remove();" '
-            f'style="display:none;">')
+    # Cleanly strip all outer/inner borders from Ace editor via isolated script
+    ace_clean_script = f"""
+    <script>
+    (function() {{
+        try {{
+            const win = window.parent || window;
+            const doc = win.document;
+            win.__aceThemeName = "{editor_ace_theme}";
+            const cleanFrames = () => {{
+                try {{
+                    doc.querySelectorAll('iframe[src*="streamlit_ace"], iframe[title*="streamlit_ace"], div[data-testid="stCustomComponentV1"] iframe').forEach(f => {{
+                        f.style.setProperty('border', 'none', 'important');
+                        f.style.setProperty('outline', 'none', 'important');
+                        f.style.setProperty('box-shadow', 'none', 'important');
+                        try {{
+                            const fdoc = f.contentDocument;
+                            if (fdoc && fdoc.head) {{
+                                let s = fdoc.getElementById('cd-ace-borderless');
+                                if (!s) {{
+                                    s = fdoc.createElement('style');
+                                    s.id = 'cd-ace-borderless';
+                                    fdoc.head.appendChild(s);
+                                }}
+                                s.textContent = 'html, body, #root, .MuiPaper-root, .MuiBox-root, .ace_editor {{ background: transparent !important; border: none !important; box-shadow: none !important; outline: none !important; margin: 0 !important; }}';
+                            }}
+                        }} catch (_) {{}}
+                    }});
+                }} catch (_) {{}}
+            }};
+            cleanFrames();
+            if (!win.__cleanAceTimer) {{
+                win.__cleanAceTimer = win.setInterval(cleanFrames, 300);
+            }}
+        }} catch (_) {{}}
+    }})();
+    </script>
+    """
+    components.html(ace_clean_script, height=0, width=0)
     return theme
