@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 from secure_scan import run_security_guardrail
+from security_layer import evaluate_request_security
 
 DEFAULT_MAX_OUTPUT_BYTES = 256 * 1024
 DEFAULT_MAX_CODE_BYTES = int(os.environ.get("MAX_CODE_BYTES", 2 * 1024 * 1024))  # 2 MB default (supports 10,000+ lines)
@@ -647,6 +648,68 @@ def _run_local_process(
     return RunResult(-1, "", f"Unsupported language: {language}", exit_code=-1)
 
 
+def _run_in_docker_sandbox(
+    cpp_code: str,
+    stdin_input: str,
+    timeout_compile: int,
+    timeout_run: float,
+    max_output_bytes: int,
+) -> RunResult | None:
+    """Execute C++ code inside an isolated Docker + Seccomp container when enabled."""
+    if os.getenv("TOACD_DOCKER_SANDBOX", "0") != "1":
+        return None
+    docker_bin = shutil.which("docker")
+    if not docker_bin:
+        return None
+
+    image = os.getenv("TOACD_SANDBOX_IMAGE", "toacd-cpp-sandbox:latest")
+    seccomp_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "security", "seccomp-cpp.json"
+    )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        src_path = os.path.join(tmpdir, "main.cpp")
+        with open(src_path, "w", encoding="utf-8") as f:
+            f.write(cpp_code)
+
+        cmd = [
+            docker_bin, "run", "--rm", "-i",
+            "--network=none",
+            "--memory=128m",
+            "--cpus=0.5",
+            "--pids-limit=32",
+            "--security-opt", "no-new-privileges",
+        ]
+        if os.path.exists(seccomp_path):
+            cmd.extend(["--security-opt", f"seccomp={seccomp_path}"])
+
+        shell_cmd = (
+            "g++ -Wall -Wextra -std=c++17 /sandbox/main.cpp -o /tmp/prog 2>/tmp/cerr.txt "
+            "|| { cat /tmp/cerr.txt >&2; exit 101; }; "
+            "/tmp/prog"
+        )
+        cmd.extend(["-v", f"{tmpdir}:/sandbox:ro", image, shell_cmd])
+
+        start_t = time.perf_counter()
+        try:
+            proc = subprocess.run(
+                cmd,
+                input=stdin_input.encode("utf-8"),
+                capture_output=True,
+                timeout=timeout_compile + timeout_run,
+            )
+            elapsed = round(time.perf_counter() - start_t, 4)
+            stdout = proc.stdout[:max_output_bytes].decode("utf-8", errors="replace")
+            stderr = proc.stderr[:max_output_bytes].decode("utf-8", errors="replace")
+            if proc.returncode == 101:
+                return RunResult(1, stdout, stderr, exit_code=1, execution_time=elapsed)
+            if proc.returncode != 0:
+                return RunResult(2, stdout, stderr, exit_code=proc.returncode, execution_time=elapsed)
+            return RunResult(0, stdout, stderr, exit_code=0, execution_time=elapsed)
+        except subprocess.TimeoutExpired:
+            elapsed = round(time.perf_counter() - start_t, 4)
+            return RunResult(-1, "", "Docker sandbox execution timed out.", exit_code=-1, execution_time=elapsed, timed_out=True)
+
+
 def compile_and_run(
     cpp_code: str,
     stdin_input: str = "",
@@ -655,8 +718,9 @@ def compile_and_run(
     language: str = "cpp",
     max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
     sanitizers: bool = False,
+    client_id: str = "local-session",
 ) -> RunResult:
-    """Compile and execute code locally with resource limits and pre-execution security guardrails."""
+    """Compile and execute code locally with resource limits and multi-layer security guardrails."""
     if not isinstance(cpp_code, str):
         return RunResult(1, "", "Execution blocked: source code must be text.", exit_code=1)
     if max_output_bytes < 1:
@@ -695,7 +759,22 @@ def compile_and_run(
             exit_code=-1,
         )
 
-    # 0. DEFENSE-IN-DEPTH: Static Pre-Execution Security Gate
+    # 0A. PERIMETER & BEHAVIORAL SECURITY LAYER (RateLimit/Fail2ban -> OWASP WAF -> IsolationForest)
+    sec_res = evaluate_request_security(
+        cpp_code,
+        stdin_input=stdin_input,
+        client_id=client_id,
+    )
+    if not sec_res.allowed:
+        return RunResult(
+            1,
+            "",
+            f"🚫 PERIMETER SECURITY BLOCKED ({sec_res.blocked_by}):\n{sec_res.reason}\n\nExecution was aborted to protect the system.",
+            exit_code=1,
+            execution_time=0.0,
+        )
+
+    # 0B. DEFENSE-IN-DEPTH: Static Pre-Execution Security Gate
     is_safe, warning_msg = run_security_guardrail(cpp_code)
     if not is_safe:
         return RunResult(
@@ -724,6 +803,18 @@ def compile_and_run(
             timeout=timeout_run,
             max_output_bytes=max_output_bytes,
         )
+
+    # Optional Docker + Seccomp Sandbox (when TOACD_DOCKER_SANDBOX=1 and Docker is available)
+    if normalized_language == "cpp" and not sanitizers:
+        docker_res = _run_in_docker_sandbox(
+            cpp_code,
+            stdin_input,
+            timeout_compile,
+            timeout_run,
+            max_output_bytes,
+        )
+        if docker_res is not None:
+            return docker_res
 
     # Local compiled/interpreted execution
     return _run_local_process(

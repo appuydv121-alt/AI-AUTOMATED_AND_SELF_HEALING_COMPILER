@@ -103,7 +103,7 @@ def generate_system_architecture():
 
     ax.text(50, 96.6, "TOACD: CHATBOT-DRIVEN C++ COMPILER & AGENTIC DEBUGGER",
             fontsize=17, fontweight='heavy', color='#F8FAFC', ha='center', va='center', zorder=5, fontfamily='sans-serif')
-    ax.text(50, 94.4, "End-to-End System Architecture: Multi-Agent Orchestration • Sandboxed LLDB Debugging • Security Guardrails • Green Telemetry",
+    ax.text(50, 94.4, "End-to-End System Architecture: Multi-Layer Security • Docker+Seccomp Sandbox • Agentic LLDB • Green Telemetry",
             fontsize=10.5, fontweight='bold', color='#38BDF8', ha='center', va='center', zorder=5, fontfamily='sans-serif')
 
     # ─────────────────────────────────────────────────────────────────────────────
@@ -156,43 +156,49 @@ def generate_system_architecture():
     ], icon="[METRICS]")
 
     # ─────────────────────────────────────────────────────────────────────────────
-    # COLUMN 2: SECURITY GUARDRAILS & SANDBOXED COMPILER (x: 26 to 49)
+    # COLUMN 2: MULTI-LAYER SECURITY & DOCKER SANDBOX (x: 26 to 49)
     # ─────────────────────────────────────────────────────────────────────────────
-    draw_card(26, 68, 23, 23, c_security, "Pre-Execution Guardrail", "secure_scan.py • Static AST Scan", [
-        "• Regex & AST Hazardous Token Inspection:",
-        "  - System calls: system(), popen(), fork()",
-        "  - Process control: exec*(), ptrace(), kill()",
-        "  - File traversal: <filesystem>, chdir(), unlink()",
-        "  - Raw networking: socket(), connect(), send()",
+    draw_card(26, 67, 23, 24, c_security, "Security Layer (Perimeter & ML)", "WAF • Isolation Forest • Fail2ban", [
+        ("• 1. ModSecurity + OWASP CRS", [
+            "HTTP request & payload filtering",
+            "Blocks XSS, SQLi & malformed inputs"
+        ]),
+        ("• 2. Isolation Forest (ML Anomaly)", [
+            "Suspicious behaviour & outlier detection",
+            "Scores abnormal submission patterns"
+        ]),
+        ("• 3. Rate Limiting + Fail2ban", [
+            "Abuse prevention & brute-force defense",
+            "Automated IP throttling & blocking"
+        ])
+    ], icon="[SHIELD]")
+
+    draw_card(26, 45, 23, 19, c_security, "Code Security Scanner", "secure_scan.py • Static & CWE Checks", [
+        "• Regex & AST Hazardous Token Scan:",
+        "  - Shell/Proc: system(), popen(), fork(), exec*()",
+        "  - FS/Net: <filesystem>, unlink(), socket()",
         "• Security Policy Gatekeeper:",
-        "  - Blocks malicious code prior to compilation",
-        "  - Zero untrusted shell execution allowed",
-        "  - Emits security alert to security_audit.log"
+        "  - Halts CWE violations prior to sandbox",
+        "  - Logs incidents to security_audit.log"
     ], icon="[GUARD]")
 
-    draw_card(26, 7, 23, 58, c_compiler, "Sandboxed Compiler Service", "compiler_service.py • MinGW / Clang", [
-        ("• Isolated GCC/Clang Engine", [
+    draw_card(26, 7, 23, 35, c_compiler, "Docker + Seccomp Sandbox", "Execution Isolation • GCC/Clang", [
+        ("• Containerized Compiler Engine", [
+            "Docker + Seccomp syscall allowlist",
             "Flags: -Wall -Wextra -std=c++17 -g",
-            "Strict timeout enforcement (5.0s)",
-            "Restricted RAM / process environment",
-            "Safe temp file isolation (temp_program.exe)"
+            "Strict 5.0s timeout & RAM/CPU caps"
         ]),
         ("• Deterministic Tri-Path Dispatcher", [
-            "Path A (Exit 0): Clean Run / Success",
-            "  -> Execution stdout capture & display",
-            "  -> Complexity & performance analysis",
-            "Path B (Exit 2): Runtime Crash / SegFault",
-            "  -> Triggers Agentic LLDB Debug Loop",
-            "Path C (Exit 1): Compilation Error",
-            "  -> Error classifier extracts error lines",
-            "Path D (Exit -1): Timeout / Hang",
-            "  -> Identifies infinite loops / O(N^k)"
+            "Path A (Exit 0): Clean Run -> stdout & Big-O",
+            "Path B (Exit 2): Crash -> Agentic LLDB Loop",
+            "Path C (Exit 1): Compile Error -> Classifier",
+            "Path D (Exit -1): Timeout -> Hang / O(N^k)"
         ]),
         ("• Output Sanitizer & Capture", [
-            "Captures stdout, stderr, exit codes",
-            "Prevents runaway memory buffer allocation"
+            "Isolated stdout, stderr & exit codes",
+            "Prevents runaway memory allocation"
         ])
-    ], icon="[COMPILER]")
+    ], icon="[SANDBOX]")
 
     # ─────────────────────────────────────────────────────────────────────────────
     # COLUMN 3: MULTI-AGENT ORCHESTRATION & ANALYSIS (x: 51 to 74)
@@ -279,41 +285,47 @@ def generate_system_architecture():
     # ─────────────────────────────────────────────────────────────────────────────
     # CONNECTING ARROWS & DATA FLOW
     # ─────────────────────────────────────────────────────────────────────────────
-    # 1. UI -> Pre-Execution Guardrail
-    draw_arrow(24, 78, 26, 78, c_ui, "Source Code", text_pos=0.5)
+    # 1. UI -> Perimeter & Behavioral Security Layer
+    draw_arrow(24, 82, 26, 82, c_ui, "HTTP", text_pos=0.5)
 
-    # 2. Guardrail Block -> Back to UI
-    draw_arrow(26, 72, 24, 72, '#EF4444', "Blocked (CWE)", text_pos=0.5)
+    # 2. Security Layer Block -> Back to UI
+    draw_arrow(26, 69, 24, 69, '#EF4444', "WAF Block", text_pos=0.5)
 
-    # 3. Guardrail Safe -> Compiler Service
-    draw_arrow(37.5, 68, 37.5, 65, c_compiler, "Safe Code", text_pos=0.5)
+    # 3. Security Layer -> Code Security Scanner
+    draw_arrow(37.5, 67, 37.5, 64, c_security, "Filtered Request", text_pos=0.5)
 
-    # 4. Compiler -> Multi-Agent Orchestrator
-    draw_arrow(49, 78, 51, 78, c_orch, "Compiler Result", text_pos=0.5)
+    # 4. Code Security Scanner Block -> Back to UI
+    draw_arrow(26, 53, 24, 53, '#EF4444', "CWE Block", text_pos=0.5)
 
-    # 5. Compiler Path B -> Agentic LLDB
-    draw_arrow(49, 36, 76, 70, c_agentic, "Exit 2 (Crash / SIGSEGV)", text_pos=0.6, rad=-0.12)
+    # 5. Code Security Scanner -> Docker + Seccomp Sandbox
+    draw_arrow(37.5, 45, 37.5, 42, c_compiler, "Safe Code", text_pos=0.5)
 
-    # 6. LLDB <-> Local LLM (ReAct loop)
+    # 6. Docker Sandbox -> Multi-Agent Orchestrator
+    draw_arrow(49, 36.5, 51, 76, c_orch, "Compile", text_pos=0.5, rad=-0.04)
+
+    # 7. Docker Sandbox Path B -> Agentic LLDB (routed through gap at y=36.5)
+    draw_arrow(49, 34, 76, 56, c_agentic, "Exit 2 (Crash / SIGSEGV)", text_pos=0.22, rad=0.28)
+
+    # 8. LLDB <-> Local LLM (ReAct loop)
     draw_arrow(87, 53, 87, 50, c_agentic, "ReAct Steps", text_pos=0.5)
 
-    # 7. Orchestrator -> Reasoning Engine
+    # 9. Orchestrator -> Reasoning Engine
     draw_arrow(62.5, 68, 62.5, 65, c_reason, "Facts Extraction", text_pos=0.5)
 
-    # 8. Reasoning Engine -> Complexity & Test Agents
+    # 10. Reasoning Engine -> Complexity & Test Agents
     draw_arrow(62.5, 38, 62.5, 35, c_ui, "Task Delegation", text_pos=0.5)
 
-    # 9. Orchestrator & Reasoning -> Local LLM
+    # 11. Orchestrator & Reasoning -> Local LLM
     draw_arrow(74, 51, 76, 45, c_llm, "Prompt / Context", text_pos=0.5, rad=-0.08)
 
-    # 10. Local LLM -> UI (Verified Patch)
-    draw_arrow(76, 25, 24, 60, c_llm, "Verified Code Fix & Tutor Advice", text_pos=0.45, rad=0.18)
+    # 12. Local LLM -> UI (Verified Patch)
+    draw_arrow(76, 12, 24, 54, c_llm, "Verified Code Fix & Tutor Advice", text_pos=0.45, rad=0.14)
 
-    # 11. Compiler -> UI (Direct Output)
-    draw_arrow(26, 50, 24, 56, c_compiler, "stdout / stderr", text_pos=0.5)
+    # 13. Docker Sandbox -> UI (Direct Output)
+    draw_arrow(26, 40, 24, 59, c_compiler, "stdout", text_pos=0.18)
 
-    # 12. Compiler & Runs -> Observability & Telemetry
-    draw_arrow(26, 25, 24, 25, c_green, "Hardware Telemetry (kWh / CO2)", text_pos=0.5)
+    # 14. Docker Sandbox -> Observability & Telemetry
+    draw_arrow(26, 11, 24, 11, c_green, "Telemetry (kWh / CO2)", text_pos=0.5)
 
     # ─────────────────────────────────────────────────────────────────────────────
     # FOOTER & LEGEND BAR
@@ -327,8 +339,8 @@ def generate_system_architecture():
 
     legends = [
         (c_ui, "UI & IDE Studio"),
-        (c_security, "Pre-Scan Security"),
-        (c_compiler, "Sandboxed Compiler"),
+        (c_security, "Multi-Layer Security"),
+        (c_compiler, "Docker+Seccomp Sandbox"),
         (c_orch, "Multi-Agent Orchestrator"),
         (c_reason, "Deep Reasoning"),
         (c_agentic, "Agentic LLDB (ReAct)"),

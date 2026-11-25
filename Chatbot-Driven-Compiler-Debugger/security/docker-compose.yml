@@ -1,0 +1,29 @@
+services:
+  waf-proxy:
+    image: owasp/modsecurity-crs:nginx
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx-modsecurity.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - toacd-app
+    restart: unless-stopped
+
+  toacd-app:
+    build:
+      context: ..
+    environment:
+      - TOACD_DOCKER_SANDBOX=1
+      - TOACD_SANDBOX_IMAGE=toacd-cpp-sandbox:latest
+    ports:
+      - "8501:8501"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+  cpp-sandbox:
+    build:
+      context: .
+      dockerfile: Dockerfile.sandbox
+    image: toacd-cpp-sandbox:latest
+    profiles: ["build-only"]

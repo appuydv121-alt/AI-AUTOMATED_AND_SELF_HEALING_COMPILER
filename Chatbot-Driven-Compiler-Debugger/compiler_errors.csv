@@ -1400,3 +1400,23 @@ C:\Users\Arpit\AppData\Local\Temp\shared-exec-bc92fz81\source.cpp:35:9: error: '
       |         ^        
 compilation terminated due to -fmax-errors=5.
 ",N/A
+2026-11-19 17:55:03,"C:\Users\Arpit\AppData\Local\Temp\compiler-local-nlcqzayb\source.cpp:2:10: fatal error: include: No such file or directory
+    2 | #include <include>
+      |          ^~~~~~~~~
+compilation terminated.
+",Unknown,"C:\Users\Arpit\AppData\Local\Temp\compiler-local-nlcqzayb\source.cpp:2:10: fatal error: include: No such file or directory
+    2 | #include <include>
+      |          ^~~~~~~~~
+compilation terminated.
+",N/A
+2026-11-19 18:30:26,"C:\Users\Arpit\AppData\Local\Temp\compiler-local-up1xkd1_\source.cpp: In function 'int main()':
+C:\Users\Arpit\AppData\Local\Temp\compiler-local-up1xkd1_\source.cpp:6:13: error: 'age1' was not declared in this scope; did you mean 'age'?
+    6 |     cout << age1 << endl;
+      |             ^~~~
+      |             age
+",Unknown,"C:\Users\Arpit\AppData\Local\Temp\compiler-local-up1xkd1_\source.cpp: In function 'int main()':
+C:\Users\Arpit\AppData\Local\Temp\compiler-local-up1xkd1_\source.cpp:6:13: error: 'age1' was not declared in this scope; did you mean 'age'?
+    6 |     cout << age1 << endl;
+      |             ^~~~
+      |             age
+",N/A

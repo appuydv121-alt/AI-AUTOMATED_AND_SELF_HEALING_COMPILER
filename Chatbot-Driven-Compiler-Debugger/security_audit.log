@@ -86,3 +86,19 @@ int main() {
     return 0;
 }
 ======================================================================
+[2026-11-25 11:33:45] [THREAT_INTERCEPTED] Action: OWASP WAF Filter
+Triggered Rule: [CRS-941100] XSS / Script injection payload detected (in stdin)
+Code Excerpt:
+#include <iostream>
+int main(){ return 0; }
+
+======================================================================
+[2026-11-25 11:33:46] [TOACD-BAN] client=10.0.0.5 reason=Rate limit exceeded duration=60s
+[2026-11-25 11:34:55] [THREAT_INTERCEPTED] Action: OWASP WAF Filter
+Triggered Rule: [CRS-941100] XSS / Script injection payload detected (in stdin)
+Code Excerpt:
+#include <iostream>
+int main(){ return 0; }
+
+======================================================================
+[2026-11-25 11:34:55] [TOACD-BAN] client=10.0.0.5 reason=Rate limit exceeded duration=60s
